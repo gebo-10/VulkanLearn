@@ -1,6 +1,7 @@
 #pragma once
 
 #include "vulkan_device.h"
+#include "../window/window.h"
 
 #include <algorithm>
 #include <limits>
@@ -23,13 +24,13 @@ public:
     Swapchain& operator=(const Swapchain&) = delete;
 
     void initialize(const VulkanDevice& device, VkSurfaceKHR surface,
-                    GLFWwindow* window) {
+                    Window& window) {
         device_ = device.handle();
         physicalDevice_ = device.physicalDevice();
         deviceGraphicsQueueFamily_ = device.graphicsQueueFamily();
         devicePresentQueueFamily_ = device.presentQueueFamily();
         surface_ = surface;
-        window_ = window;
+        window_ = &window;
         create();
     }
 
@@ -49,7 +50,7 @@ private:
     VkDevice device_ = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
     VkSurfaceKHR surface_ = VK_NULL_HANDLE;
-    GLFWwindow* window_ = nullptr;
+    Window* window_ = nullptr;
     VkSwapchainKHR swapchain_ = VK_NULL_HANDLE;
     std::vector<VkImage> images_;
     std::vector<VkImageView> imageViews_;
@@ -120,11 +121,7 @@ private:
             return capabilities.currentExtent;
         }
 
-        int width = 0;
-        int height = 0;
-        glfwGetFramebufferSize(window_, &width, &height);
-        VkExtent2D selected{static_cast<uint32_t>(width),
-                            static_cast<uint32_t>(height)};
+        VkExtent2D selected = window_->framebufferExtent();
         selected.width = std::clamp(selected.width,
                                     capabilities.minImageExtent.width,
                                     capabilities.maxImageExtent.width);

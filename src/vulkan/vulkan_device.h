@@ -61,6 +61,7 @@ public:
             vkGetPhysicalDeviceFeatures2(candidate, &features);
 
             if (families.complete() && supportsSwapchain(candidate) &&
+                supportsSurface(candidate) &&
                 vulkan13Features.dynamicRendering == VK_TRUE) {
                 physicalDevice_ = candidate;
                 queueFamilies_ = families;
@@ -133,6 +134,18 @@ private:
                                return std::string(extension.extensionName) ==
                                       VK_KHR_SWAPCHAIN_EXTENSION_NAME;
                            });
+    }
+
+    bool supportsSurface(VkPhysicalDevice device) const {
+        uint32_t formatCount = 0;
+        checkVk(vkGetPhysicalDeviceSurfaceFormatsKHR(
+                    device, surface_, &formatCount, nullptr),
+                "vkGetPhysicalDeviceSurfaceFormatsKHR");
+        uint32_t presentModeCount = 0;
+        checkVk(vkGetPhysicalDeviceSurfacePresentModesKHR(
+                    device, surface_, &presentModeCount, nullptr),
+                "vkGetPhysicalDeviceSurfacePresentModesKHR");
+        return formatCount > 0 && presentModeCount > 0;
     }
 
     void createLogicalDevice() {

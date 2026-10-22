@@ -5,6 +5,7 @@
 #include "vulkan/graphics_pipeline.h"
 #include "vulkan/swapchain.h"
 #include "vulkan/sync_objects.h"
+#include "window/window.h"
 
 #include <spdlog/spdlog.h>
 
@@ -14,9 +15,10 @@ namespace vulkanlearn {
 
 class Renderer {
 public:
-    explicit Renderer(GLFWwindow* window) : window_(window) {}
+    explicit Renderer(Window& window) : window_(window) {}
 
     ~Renderer() {
+        window_.setResizeCallback({});
         if (device_.handle() != VK_NULL_HANDLE) {
             vkDeviceWaitIdle(device_.handle());
         }
@@ -33,6 +35,7 @@ public:
                              PipelineConfig::triangle());
         commandResources_.initialize(device_, swapchain_.imageCount());
         syncObjects_.initialize(device_.handle());
+        window_.setResizeCallback([this] { framebufferResized_ = true; });
     }
 
     void drawFrame() {
@@ -96,16 +99,8 @@ public:
         currentFrame_ = (currentFrame_ + 1) % kFramesInFlight;
     }
 
-    static void framebufferSizeCallback(GLFWwindow* window, int, int) {
-        auto* renderer =
-            static_cast<Renderer*>(glfwGetWindowUserPointer(window));
-        if (renderer != nullptr) {
-            renderer->framebufferResized_ = true;
-        }
-    }
-
 private:
-    GLFWwindow* window_ = nullptr;
+    Window& window_;
     VulkanInstance instance_;
     VulkanDevice device_;
     Swapchain swapchain_;
@@ -183,12 +178,10 @@ private:
     }
 
     void recreateSwapchain() {
-        int width = 0;
-        int height = 0;
-        glfwGetFramebufferSize(window_, &width, &height);
-        while (width == 0 || height == 0) {
-            glfwWaitEvents();
-            glfwGetFramebufferSize(window_, &width, &height);
+        VkExtent2D extent = window_.framebufferExtent();
+        while (extent.width == 0 || extent.height == 0) {
+            window_.waitEvents();
+            extent = window_.framebufferExtent();
         }
 
         device_.waitIdle();
