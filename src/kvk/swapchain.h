@@ -1,13 +1,13 @@
 #pragma once
 
-#include "vulkan_device.h"
-#include "../window/window.h"
+#include <kvk/device.h>
+#include <kvk/window.h>
 
 #include <algorithm>
 #include <limits>
 #include <vector>
 
-namespace vulkanlearn {
+namespace klib::vk {
 
 struct SwapchainSupport {
     VkSurfaceCapabilitiesKHR capabilities{};
@@ -23,7 +23,7 @@ public:
     Swapchain(const Swapchain&) = delete;
     Swapchain& operator=(const Swapchain&) = delete;
 
-    void initialize(const VulkanDevice& device, VkSurfaceKHR surface,
+    void initialize(const Device& device, VkSurfaceKHR surface,
                     Window& window) {
         device_ = device.handle();
         physicalDevice_ = device.physicalDevice();
@@ -254,4 +254,4 @@ private:
     uint32_t devicePresentQueueFamily_ = 0;
 };
 
-}  // namespace vulkanlearn
+}  // namespace klib::vk

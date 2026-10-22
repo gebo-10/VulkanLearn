@@ -5,7 +5,7 @@
 #include <functional>
 #include <vector>
 
-namespace vulkanlearn {
+namespace klib::vk {
 
 class Window {
 public:
@@ -23,4 +23,4 @@ public:
     virtual bool shouldClose() const = 0;
 };
 
-}  // namespace vulkanlearn
+}  // namespace klib::vk

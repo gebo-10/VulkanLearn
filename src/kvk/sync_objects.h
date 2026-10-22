@@ -1,10 +1,11 @@
 #pragma once
-
-#include "../renderer_config.h"
+#include <vulkan/vulkan.h>
+#include <kvk/utils.h>
+#include <kvk/renderer_config.h>
 
 #include <array>
 
-namespace vulkanlearn {
+namespace klib::vk {
 
 class SyncObjects {
 public:
@@ -74,4 +75,4 @@ private:
     }
 };
 
-}  // namespace vulkanlearn
+}  // namespace klib::vk

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "vulkan_instance.h"
+#include <kvk/instance.h>
 
 #include <spdlog/spdlog.h>
 
@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace vulkanlearn {
+namespace klib::vk {
 
 struct QueueFamilyIndices {
     std::optional<uint32_t> graphics;
@@ -19,15 +19,15 @@ struct QueueFamilyIndices {
     bool complete() const { return graphics.has_value() && present.has_value(); }
 };
 
-class VulkanDevice {
+class Device {
 public:
-    VulkanDevice() = default;
-    ~VulkanDevice() { reset(); }
+    Device() = default;
+    ~Device() { reset(); }
 
-    VulkanDevice(const VulkanDevice&) = delete;
-    VulkanDevice& operator=(const VulkanDevice&) = delete;
+    Device(const Device&) = delete;
+    Device& operator=(const Device&) = delete;
 
-    void initialize(const VulkanInstance& instance) {
+    void initialize(const Instance& instance) {
         instance_ = instance.handle();
         surface_ = instance.surface();
 
@@ -193,4 +193,4 @@ private:
     }
 };
 
-}  // namespace vulkanlearn
+}  // namespace klib::vk

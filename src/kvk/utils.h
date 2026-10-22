@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-namespace vulkanlearn {
+namespace klib::vk {
 
 inline void checkVk(VkResult result, const char* operation) {
     if (result != VK_SUCCESS) {
@@ -52,4 +52,4 @@ inline std::vector<char> readFile(const std::filesystem::path& path) {
     return buffer;
 }
 
-}  // namespace vulkanlearn
+}  // namespace klib::vk

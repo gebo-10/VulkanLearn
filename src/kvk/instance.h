@@ -1,17 +1,17 @@
 #pragma once
 
-#include "../util/vk_utils.h"
-#include "../window/window.h"
+#include <kvk/utils.h>
+#include <kvk/window.h>
 
-namespace vulkanlearn {
+namespace klib::vk {
 
-class VulkanInstance {
+class Instance {
 public:
-    VulkanInstance() = default;
-    ~VulkanInstance() { reset(); }
+    Instance() = default;
+    ~Instance() { reset(); }
 
-    VulkanInstance(const VulkanInstance&) = delete;
-    VulkanInstance& operator=(const VulkanInstance&) = delete;
+    Instance(const Instance&) = delete;
+    Instance& operator=(const Instance&) = delete;
 
     void initialize(const Window& window) {
         VkApplicationInfo appInfo{VK_STRUCTURE_TYPE_APPLICATION_INFO};
@@ -64,4 +64,4 @@ private:
     }
 };
 
-}  // namespace vulkanlearn
+}  // namespace klib::vk

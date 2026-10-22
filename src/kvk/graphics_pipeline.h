@@ -1,11 +1,11 @@
 #pragma once
 
-#include "vulkan_device.h"
+#include <kvk/device.h>
 
 #include <filesystem>
 #include <vector>
 
-namespace vulkanlearn {
+namespace klib::vk {
 
 struct PipelineConfig {
     std::filesystem::path vertexShader;
@@ -185,4 +185,4 @@ private:
     }
 };
 
-}  // namespace vulkanlearn
+}  // namespace klib::vk

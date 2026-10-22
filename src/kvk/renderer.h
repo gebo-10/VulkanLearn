@@ -1,17 +1,17 @@
 #pragma once
 
 #include "renderer_config.h"
-#include "vulkan/command_resources.h"
-#include "vulkan/graphics_pipeline.h"
-#include "vulkan/swapchain.h"
-#include "vulkan/sync_objects.h"
-#include "window/window.h"
+#include <kvk/command_resources.h>
+#include <kvk/graphics_pipeline.h>
+#include <kvk/swapchain.h>
+#include <kvk/sync_objects.h>
+#include <kvk/window.h>
 
 #include <spdlog/spdlog.h>
 
 #include <cstdint>
 
-namespace vulkanlearn {
+namespace klib::vk {
 
 class Renderer {
 public:
@@ -101,8 +101,8 @@ public:
 
 private:
     Window& window_;
-    VulkanInstance instance_;
-    VulkanDevice device_;
+    Instance instance_;
+    Device device_;
     Swapchain swapchain_;
     GraphicsPipeline pipeline_;
     CommandResources commandResources_;
@@ -191,4 +191,4 @@ private:
     }
 };
 
-}  // namespace vulkanlearn
+}  // namespace klib::vk

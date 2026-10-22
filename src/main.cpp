@@ -1,5 +1,5 @@
-#include "renderer.h"
-#include "window/glfw_window.h"
+#include <kvk/renderer.h>
+#include "glfw_window.h"
 
 #include <spdlog/spdlog.h>
 
@@ -9,10 +9,10 @@ int main() {
     spdlog::info("Starting Vulkan 1.4 triangle demo");
     int exitCode = 0;
     try {
-        vulkanlearn::GlfwWindow window(
-            vulkanlearn::kWindowWidth, vulkanlearn::kWindowHeight,
+        LearnVulkan::GlfwWindow window(
+            klib::vk::kWindowWidth, klib::vk::kWindowHeight,
             "Vulkan 1.4 - Triangle");
-        vulkanlearn::Renderer renderer(window);
+        klib::vk::Renderer renderer(window);
         renderer.initialize();
 
         while (!window.shouldClose()) {

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "window.h"
+#include <kvk/window.h>
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -11,9 +11,9 @@
 #include <utility>
 #include <vector>
 
-namespace vulkanlearn {
+namespace LearnVulkan {
 
-class GlfwWindow final : public Window {
+class GlfwWindow final : public klib::vk::Window {
 public:
     GlfwWindow(uint32_t width, uint32_t height, const char* title) {
         if (glfwInit() != GLFW_TRUE) {
@@ -89,4 +89,4 @@ private:
     }
 };
 
-}  // namespace vulkanlearn
+}  // namespace klib::vk

@@ -1,10 +1,10 @@
 #pragma once
 
-#include "vulkan_device.h"
+#include <kvk/device.h>
 
 #include <vector>
 
-namespace vulkanlearn {
+namespace klib::vk {
 
 class CommandResources {
 public:
@@ -14,7 +14,7 @@ public:
     CommandResources(const CommandResources&) = delete;
     CommandResources& operator=(const CommandResources&) = delete;
 
-    void initialize(const VulkanDevice& device, uint32_t commandBufferCount) {
+    void initialize(const Device& device, uint32_t commandBufferCount) {
         device_ = device.handle();
         VkCommandPoolCreateInfo poolInfo{
             VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
@@ -67,4 +67,4 @@ private:
     }
 };
 
-}  // namespace vulkanlearn
+}  // namespace klib::vk

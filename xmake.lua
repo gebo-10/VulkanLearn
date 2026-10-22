@@ -27,6 +27,7 @@ add_defines("SPDLOG_ACTIVE_LEVEL=0")
 target("VulkanLearn")
     set_kind("binary")
     add_files("src/*.cpp")
+    add_includedirs("src")
 
     add_packages("spdlog",  "glfw", "glm")
 
