@@ -76,6 +76,8 @@ public:
         return glfwWindowShouldClose(window_) == GLFW_TRUE;
     }
 
+    GLFWwindow* nativeHandle() const { return window_; }
+
 private:
     GLFWwindow* window_ = nullptr;
     ResizeCallback resizeCallback_;

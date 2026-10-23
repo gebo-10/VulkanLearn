@@ -1,7 +1,7 @@
 set_project("VulkanLearnProject")
 set_version("0.0.1")
 
-add_rules("plugin.compile_commands.autoupdate") --, {outputdir = ".vscode"}
+add_rules("plugin.compile_commands.autoupdate", {outputdir = ".vscode"}) --
 
 add_rules("mode.debug")
 --add_rules("mode.release")
@@ -21,6 +21,9 @@ add_requires("glm", { alias = "glm"})
 add_requires("glfw",{alias = "glfw",configs = { build = "missing"} })
 
 
+--includes("external/klib/core/xmake.lua")
+includes("src/imgui/xmake.lua")
+
 add_defines("DEBUG")
 add_defines("SPDLOG_ACTIVE_LEVEL=0")
 
@@ -28,6 +31,9 @@ target("VulkanLearn")
     set_kind("binary")
     add_files("src/*.cpp")
     add_includedirs("src")
+
+    --add_deps("klib.core")
+    add_deps("klib.imgui-glfw-vulkan")
 
     add_packages("spdlog",  "glfw", "glm")
 

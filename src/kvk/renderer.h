@@ -7,9 +7,14 @@
 #include <kvk/sync_objects.h>
 #include <kvk/window.h>
 
+#include <imgui.h>
+#include <backends/imgui_impl_glfw.h>
+#include <backends/imgui_impl_vulkan.h>
 #include <spdlog/spdlog.h>
 
 #include <cstdint>
+
+struct GLFWwindow;
 
 namespace klib::vk {
 
@@ -22,6 +27,7 @@ public:
         if (device_.handle() != VK_NULL_HANDLE) {
             vkDeviceWaitIdle(device_.handle());
         }
+        shutdownImGui();
     }
 
     Renderer(const Renderer&) = delete;
@@ -38,7 +44,61 @@ public:
         window_.setResizeCallback([this] { framebufferResized_ = true; });
     }
 
-    void drawFrame() {
+    void initializeImGui(GLFWwindow* window) {
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        imguiContextCreated_ = true;
+        ImGuiIO& io = ImGui::GetIO();
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard |
+                          ImGuiConfigFlags_DockingEnable;
+        ImGui::StyleColorsDark();
+
+        // ImGuiIO& io = ImGui::GetIO();
+        // io.ConfigDpiScaleFonts = true;
+
+        float dpi_scale = 2.0f;
+        ImGuiStyle& style = ImGui::GetStyle();
+        style.ScaleAllSizes(dpi_scale); // 缩放内边距、间距、边框等
+        style.FontScaleDpi = dpi_scale; // 缩放字体
+
+        ImVec4* colors = ImGui::GetStyle().Colors;
+        colors[ImGuiCol_WindowBg]               = ImVec4(0.18f, 0.18f, 0.18f, 0.70f);
+
+
+
+
+
+        if (!ImGui_ImplGlfw_InitForVulkan(window, true)) {
+            throw std::runtime_error("Failed to initialize ImGui GLFW backend");
+        }
+        imguiGlfwInitialized_ = true;
+
+        VkPipelineRenderingCreateInfo renderingInfo{
+            VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+        const VkFormat colorFormat = swapchain_.imageFormat();
+        renderingInfo.colorAttachmentCount = 1;
+        renderingInfo.pColorAttachmentFormats = &colorFormat;
+
+        ImGui_ImplVulkan_InitInfo initInfo{};
+        initInfo.ApiVersion = VK_API_VERSION_1_4;
+        initInfo.Instance = instance_.handle();
+        initInfo.PhysicalDevice = device_.physicalDevice();
+        initInfo.Device = device_.handle();
+        initInfo.QueueFamily = device_.graphicsQueueFamily();
+        initInfo.Queue = device_.graphicsQueue();
+        initInfo.DescriptorPoolSize = 1000;
+        initInfo.MinImageCount = 2;
+        initInfo.ImageCount = swapchain_.imageCount();
+        initInfo.UseDynamicRendering = true;
+        initInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+        initInfo.PipelineInfoMain.PipelineRenderingCreateInfo = renderingInfo;
+        if (!ImGui_ImplVulkan_Init(&initInfo)) {
+            throw std::runtime_error("Failed to initialize ImGui Vulkan backend");
+        }
+        imguiVulkanInitialized_ = true;
+    }
+
+    void drawFrame(ImDrawData* drawData) {
         const VkFence frameFence = syncObjects_.fence(currentFrame_);
         checkVk(vkWaitForFences(device_.handle(), 1, &frameFence, VK_TRUE,
                                 UINT64_MAX),
@@ -60,7 +120,7 @@ public:
         checkVk(vkResetFences(device_.handle(), 1, &frameFence), "vkResetFences");
         VkCommandBuffer commandBuffer = commandResources_.handle(imageIndex);
         checkVk(vkResetCommandBuffer(commandBuffer, 0), "vkResetCommandBuffer");
-        recordCommandBuffer(commandBuffer, imageIndex);
+        recordCommandBuffer(commandBuffer, imageIndex, drawData);
 
         const VkPipelineStageFlags waitStage =
             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -109,8 +169,12 @@ private:
     SyncObjects syncObjects_;
     uint32_t currentFrame_ = 0;
     bool framebufferResized_ = false;
+    bool imguiContextCreated_ = false;
+    bool imguiGlfwInitialized_ = false;
+    bool imguiVulkanInitialized_ = false;
 
-    void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
+    void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex,
+                             ImDrawData* drawData) {
         VkCommandBufferBeginInfo beginInfo{
             VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         checkVk(vkBeginCommandBuffer(commandBuffer, &beginInfo),
@@ -157,6 +221,9 @@ private:
         vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
         vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
         vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+        if (imguiVulkanInitialized_ && drawData != nullptr) {
+            ImGui_ImplVulkan_RenderDrawData(drawData, commandBuffer);
+        }
         vkCmdEndRendering(commandBuffer);
 
         VkImageMemoryBarrier toPresent{
@@ -188,6 +255,21 @@ private:
         swapchain_.recreate();
         pipeline_.recreate(swapchain_.imageFormat());
         commandResources_.recreate(swapchain_.imageCount());
+    }
+
+    void shutdownImGui() {
+        if (imguiVulkanInitialized_) {
+            ImGui_ImplVulkan_Shutdown();
+            imguiVulkanInitialized_ = false;
+        }
+        if (imguiGlfwInitialized_) {
+            ImGui_ImplGlfw_Shutdown();
+            imguiGlfwInitialized_ = false;
+        }
+        if (imguiContextCreated_) {
+            ImGui::DestroyContext();
+            imguiContextCreated_ = false;
+        }
     }
 };
 

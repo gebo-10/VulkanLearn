@@ -1,6 +1,9 @@
 #include <kvk/renderer.h>
 #include "glfw_window.h"
 
+#include <imgui.h>
+#include <backends/imgui_impl_glfw.h>
+#include <backends/imgui_impl_vulkan.h>
 #include <spdlog/spdlog.h>
 
 #include <exception>
@@ -14,10 +17,17 @@ int main() {
             "Vulkan 1.4 - Triangle");
         klib::vk::Renderer renderer(window);
         renderer.initialize();
-
+        renderer.initializeImGui(window.nativeHandle());
+        
+        bool showDemoWindow = true;
         while (!window.shouldClose()) {
             window.pollEvents();
-            renderer.drawFrame();
+            ImGui_ImplVulkan_NewFrame();
+            ImGui_ImplGlfw_NewFrame();
+            ImGui::NewFrame();
+            ImGui::ShowDemoWindow(&showDemoWindow);
+            ImGui::Render();
+            renderer.drawFrame(ImGui::GetDrawData());
         }
     } catch (const std::exception& error) {
         spdlog::error("Vulkan demo failed: {}", error.what());
