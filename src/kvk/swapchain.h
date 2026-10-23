@@ -107,11 +107,11 @@ private:
         if (modes.empty()) {
             throw std::runtime_error("Surface has no supported present modes");
         }
-        for (VkPresentModeKHR mode : modes) {
-            if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
-                return mode;
-            }
-        }
+        // for (VkPresentModeKHR mode : modes) {
+        //     if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
+        //         return mode;
+        //     }
+        // }
         return VK_PRESENT_MODE_FIFO_KHR;
     }
 

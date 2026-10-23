@@ -32,6 +32,8 @@ target("VulkanLearn")
     add_files("src/*.cpp")
     add_includedirs("src")
 
+    add_headerfiles("src/**.h")
+
     --add_deps("klib.core")
     add_deps("klib.imgui-glfw-vulkan")
 
