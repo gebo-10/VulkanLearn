@@ -25,6 +25,11 @@ int main() {
             ImGui_ImplVulkan_NewFrame();
             ImGui_ImplGlfw_NewFrame();
             ImGui::NewFrame();
+            ImGuiID dockspace_id = ImGui::DockSpaceOverViewport(
+                0, 
+                ImGui::GetMainViewport(), 
+                ImGuiDockNodeFlags_PassthruCentralNode  // 核心标志：让中央节点透传
+            );
             ImGui::ShowDemoWindow(&showDemoWindow);
             ImGui::Render();
             renderer.drawFrame(ImGui::GetDrawData());
