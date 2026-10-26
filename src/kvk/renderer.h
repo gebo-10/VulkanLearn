@@ -6,6 +6,8 @@
 #include <kvk/swapchain.h>
 #include <kvk/sync_objects.h>
 #include <kvk/window.h>
+#include <kvk/transient_command_pool.h>
+
 
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
@@ -47,6 +49,9 @@ public:
         instance_.initialize(window_);
         device_.initialize(instance_);
         swapchain_.initialize(device_, instance_.surface(), window_);
+
+        transients_.initialize(device_.handle(), device_.graphicsQueueFamily());
+
         createVertexBuffer();
         createTextureImage();
         createTextureSampler();
@@ -57,6 +62,7 @@ public:
         commandResources_.initialize(device_, swapchain_.imageCount());
         syncObjects_.initialize(device_.handle());
         window_.setResizeCallback([this] { framebufferResized_ = true; });
+
     }
 
     void initializeImGui(GLFWwindow* window) {
@@ -191,6 +197,7 @@ private:
     VkBuffer indexBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory indexBufferMemory_ = VK_NULL_HANDLE;
     uint32_t indexCount_ = 0;
+    TransientCommandPool transients_;
     VkImage textureImage_ = VK_NULL_HANDLE;
     VkDeviceMemory textureImageMemory_ = VK_NULL_HANDLE;
     VkImageView textureImageView_ = VK_NULL_HANDLE;
@@ -406,88 +413,44 @@ private:
         vkFreeMemory(device_.handle(), stagingMemory, nullptr);
     }
 
-    void uploadTexture(VkBuffer stagingBuffer, uint32_t width,
-                       uint32_t height) {
-        VkCommandPool commandPool = VK_NULL_HANDLE;
-        VkCommandPoolCreateInfo poolInfo{
-            VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-        poolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-        poolInfo.queueFamilyIndex = device_.graphicsQueueFamily();
-        checkVk(vkCreateCommandPool(device_.handle(), &poolInfo, nullptr,
-                                    &commandPool),
-                "vkCreateCommandPool");
-
-        try {
-            VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
-            VkCommandBufferAllocateInfo allocateInfo{
-                VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-            allocateInfo.commandPool = commandPool;
-            allocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-            allocateInfo.commandBufferCount = 1;
-            checkVk(vkAllocateCommandBuffers(device_.handle(), &allocateInfo,
-                                             &commandBuffer),
-                    "vkAllocateCommandBuffers");
-
-            VkCommandBufferBeginInfo beginInfo{
-                VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-            beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-            checkVk(vkBeginCommandBuffer(commandBuffer, &beginInfo),
-                    "vkBeginCommandBuffer");
-
+    void uploadTexture(VkBuffer stagingBuffer, uint32_t width, uint32_t height) {
+        transients_.oneShot(device_.graphicsQueue(), [&](VkCommandBuffer cmd) {
+            // ① barrier: UNDEFINED → TRANSFER_DST_OPTIMAL
             VkImageMemoryBarrier toTransfer{
                 VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-            toTransfer.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            toTransfer.oldLayout     = VK_IMAGE_LAYOUT_UNDEFINED;
+            toTransfer.newLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            toTransfer.srcAccessMask = 0;
             toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            toTransfer.image = textureImage_;
-            toTransfer.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            toTransfer.subresourceRange.levelCount = 1;
-            toTransfer.subresourceRange.layerCount = 1;
-            vkCmdPipelineBarrier(commandBuffer,
-                                 VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                                 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr,
-                                 0, nullptr, 1, &toTransfer);
+            toTransfer.image         = textureImage_;
+            toTransfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            vkCmdPipelineBarrier(cmd,
+                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT,
+                0, 0, nullptr, 0, nullptr, 1, &toTransfer);
 
-            VkBufferImageCopy copyRegion{};
-            copyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            copyRegion.imageSubresource.layerCount = 1;
-            copyRegion.imageExtent = {width, height, 1};
-            vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, textureImage_,
-                                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
-                                   &copyRegion);
+            // ② copy
+            VkBufferImageCopy region{};
+            region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            region.imageSubresource.layerCount = 1;
+            region.imageExtent = {width, height, 1};
+            vkCmdCopyBufferToImage(cmd, stagingBuffer, textureImage_,
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
+            // ③ barrier: TRANSFER_DST → SHADER_READ_ONLY
             VkImageMemoryBarrier toShaderRead{
                 VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
             toShaderRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
             toShaderRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            toShaderRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            toShaderRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            toShaderRead.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            toShaderRead.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            toShaderRead.image = textureImage_;
-            toShaderRead.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            toShaderRead.subresourceRange.levelCount = 1;
-            toShaderRead.subresourceRange.layerCount = 1;
-            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
-                                 nullptr, 0, nullptr, 1, &toShaderRead);
-            checkVk(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer");
-
-            VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-            submitInfo.commandBufferCount = 1;
-            submitInfo.pCommandBuffers = &commandBuffer;
-            checkVk(vkQueueSubmit(device_.graphicsQueue(), 1, &submitInfo,
-                                  VK_NULL_HANDLE),
-                    "vkQueueSubmit");
-            checkVk(vkQueueWaitIdle(device_.graphicsQueue()),
-                    "vkQueueWaitIdle");
-        } catch (...) {
-            vkDestroyCommandPool(device_.handle(), commandPool, nullptr);
-            throw;
-        }
-        vkDestroyCommandPool(device_.handle(), commandPool, nullptr);
+            toShaderRead.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            toShaderRead.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            toShaderRead.image         = textureImage_;
+            toShaderRead.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            vkCmdPipelineBarrier(cmd,
+                VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                0, 0, nullptr, 0, nullptr, 1, &toShaderRead);
+        });
     }
 
     void createTextureSampler() {
