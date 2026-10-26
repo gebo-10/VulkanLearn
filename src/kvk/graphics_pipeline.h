@@ -152,6 +152,11 @@ private:
 
             VkPipelineLayoutCreateInfo layoutInfo{
                 VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+            VkPushConstantRange pushConstantRange{};
+            pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+            pushConstantRange.size = sizeof(float) * 4;
+            layoutInfo.pushConstantRangeCount = 1;
+            layoutInfo.pPushConstantRanges = &pushConstantRange;
             checkVk(vkCreatePipelineLayout(device_, &layoutInfo, nullptr, &layout_),
                     "vkCreatePipelineLayout");
 

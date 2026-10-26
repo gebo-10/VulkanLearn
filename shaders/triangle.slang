@@ -24,8 +24,15 @@ struct FragmentInput
     [[vk::location(0)]] float3 color;
 };
 
+struct TriangleParameters
+{
+    float4 color;
+};
+
+[[vk::push_constant]] ConstantBuffer<TriangleParameters> triangleParameters;
+
 [shader("fragment")]
 float4 fragmentMain(FragmentInput input) : SV_Target0
 {
-    return float4(input.color, 1.0);
+    return float4(input.color * triangleParameters.color.rgb, 1.0);
 }

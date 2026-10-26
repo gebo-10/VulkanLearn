@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <array>
 
 struct GLFWwindow;
 
@@ -162,6 +163,10 @@ public:
         currentFrame_ = (currentFrame_ + 1) % kFramesInFlight;
     }
 
+    void setTriangleColor(float red, float green, float blue) {
+        triangleColor_ = {red, green, blue, 1.0f};
+    }
+
 private:
     Window& window_;
     Instance instance_;
@@ -173,6 +178,7 @@ private:
     VkBuffer vertexBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory vertexBufferMemory_ = VK_NULL_HANDLE;
     uint32_t vertexCount_ = 0;
+    std::array<float, 4> triangleColor_{1.0f, 1.0f, 1.0f, 1.0f};
     uint32_t currentFrame_ = 0;
     bool framebufferResized_ = false;
     bool imguiContextCreated_ = false;
@@ -273,6 +279,9 @@ private:
         vkCmdBeginRendering(commandBuffer, &renderingInfo);
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                           pipeline_.handle());
+        vkCmdPushConstants(commandBuffer, pipeline_.layout(),
+                           VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                           sizeof(triangleColor_), triangleColor_.data());
 
         VkViewport viewport{};
         viewport.width = static_cast<float>(extent.width);

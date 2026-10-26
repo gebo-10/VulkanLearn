@@ -6,6 +6,7 @@
 #include <backends/imgui_impl_vulkan.h>
 #include <spdlog/spdlog.h>
 
+#include <array>
 #include <exception>
 
 int main() {
@@ -18,8 +19,9 @@ int main() {
         klib::vk::Renderer renderer(window);
         renderer.initialize();
         renderer.initializeImGui(window.nativeHandle());
-        
+
         bool showDemoWindow = true;
+        std::array<float, 3> triangleColor{1.0f, 1.0f, 1.0f};
         while (!window.shouldClose()) {
             window.pollEvents();
             ImGui_ImplVulkan_NewFrame();
@@ -30,6 +32,12 @@ int main() {
                 ImGui::GetMainViewport(), 
                 ImGuiDockNodeFlags_PassthruCentralNode  // 核心标志：让中央节点透传
             );
+            ImGui::Begin("Triangle");
+            if (ImGui::ColorEdit3("Vertex color tint", triangleColor.data())) {
+                renderer.setTriangleColor(triangleColor[0], triangleColor[1],
+                                          triangleColor[2]);
+            }
+            ImGui::End();
             ImGui::ShowDemoWindow(&showDemoWindow);
             ImGui::Render();
             renderer.drawFrame(ImGui::GetDrawData());
