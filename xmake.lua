@@ -67,7 +67,7 @@ target("VulkanLearn")
              stage = "fragment", output = "triangle.frag.spv"}
         }
         for _, shader in ipairs(shaders) do
-            local source = path.join(os.projectdir(), "shaders", "triangle.slang")
+            local source = path.join(os.projectdir(), "assets", "shaders", "triangle.slang")
             local output = path.join(shader_output, shader.output)
             os.execv(compiler, {
                 source, "-target", "spirv", "-profile", "spirv_1_4",
