@@ -19,6 +19,7 @@ set_rundir("$(projectdir)")
 add_requires("spdlog", { alias = "spdlog"})
 add_requires("glm", { alias = "glm"})
 add_requires("glfw",{alias = "glfw",configs = { build = "missing"} })
+add_requires("stb", {alias = "stb", configs = {build = "missing"}})
 
 
 --includes("external/klib/core/xmake.lua")
@@ -37,7 +38,7 @@ target("VulkanLearn")
     --add_deps("klib.core")
     add_deps("klib.imgui-glfw-vulkan")
 
-    add_packages("spdlog",  "glfw", "glm")
+    add_packages("spdlog", "glfw", "glm", "stb")
 
     -- Use the SDK configured by the Vulkan installer, with the local SDK as fallback.
     local vulkan_sdk = os.getenv("VULKAN_SDK") or "D:/VulkanSDK/1.4.363.0"

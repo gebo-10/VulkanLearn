@@ -11,6 +11,7 @@ namespace klib::vk {
 struct Vertex {
     float position[2];
     float color[3];
+    float uv[2];
 };
 
 struct PipelineConfig {
@@ -23,8 +24,9 @@ struct PipelineConfig {
     VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
     std::vector<VkVertexInputBindingDescription> vertexBindings;
     std::vector<VkVertexInputAttributeDescription> vertexAttributes;
+    std::vector<VkDescriptorSetLayout> descriptorSetLayouts;
 
-    static PipelineConfig triangle() {
+    static PipelineConfig triangle(VkDescriptorSetLayout textureLayout) {
         const auto shaderDirectory = executableDirectory() / L"shaders";
         PipelineConfig config;
         config.vertexShader = shaderDirectory / L"triangle.vert.spv";
@@ -35,7 +37,10 @@ struct PipelineConfig {
             {0, 0, VK_FORMAT_R32G32_SFLOAT,
              static_cast<uint32_t>(offsetof(Vertex, position))},
             {1, 0, VK_FORMAT_R32G32B32_SFLOAT,
-             static_cast<uint32_t>(offsetof(Vertex, color))}};
+             static_cast<uint32_t>(offsetof(Vertex, color))},
+            {2, 0, VK_FORMAT_R32G32_SFLOAT,
+             static_cast<uint32_t>(offsetof(Vertex, uv))}};
+        config.descriptorSetLayouts.push_back(textureLayout);
         return config;
     }
 };
@@ -64,6 +69,7 @@ public:
 
     VkPipeline handle() const { return pipeline_; }
     VkPipelineLayout layout() const { return layout_; }
+    void shutdown() { resetHandles(); }
 
 private:
     VkDevice device_ = VK_NULL_HANDLE;
@@ -152,6 +158,9 @@ private:
 
             VkPipelineLayoutCreateInfo layoutInfo{
                 VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+            layoutInfo.setLayoutCount =
+                static_cast<uint32_t>(config_.descriptorSetLayouts.size());
+            layoutInfo.pSetLayouts = config_.descriptorSetLayouts.data();
             VkPushConstantRange pushConstantRange{};
             pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
             pushConstantRange.size = sizeof(float) * 4;
