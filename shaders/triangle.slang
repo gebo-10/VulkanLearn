@@ -4,23 +4,18 @@ struct VertexOutput
     [[vk::location(0)]] float3 color;
 };
 
-[shader("vertex")]
-VertexOutput vertexMain(uint vertexIndex : SV_VertexID)
+struct VertexInput
 {
-    const float2 positions[3] = {
-        float2(0.0, -0.65),
-        float2(0.65, 0.55),
-        float2(-0.65, 0.55)
-    };
-    const float3 colors[3] = {
-        float3(1.0, 0.2, 0.2),
-        float3(0.2, 1.0, 0.3),
-        float3(0.2, 0.4, 1.0)
-    };
+    [[vk::location(0)]] float2 position;
+    [[vk::location(1)]] float3 color;
+};
 
+[shader("vertex")]
+VertexOutput vertexMain(VertexInput input)
+{
     VertexOutput output;
-    output.position = float4(positions[vertexIndex], 0.0, 1.0);
-    output.color = colors[vertexIndex];
+    output.position = float4(input.position, 0.0, 1.0);
+    output.color = input.color;
     return output;
 }
 

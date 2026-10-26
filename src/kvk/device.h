@@ -86,6 +86,20 @@ public:
 
     void waitIdle() const { checkVk(vkDeviceWaitIdle(device_), "vkDeviceWaitIdle"); }
 
+    uint32_t findMemoryType(uint32_t typeFilter,
+                            VkMemoryPropertyFlags requiredProperties) const {
+        VkPhysicalDeviceMemoryProperties memoryProperties{};
+        vkGetPhysicalDeviceMemoryProperties(physicalDevice_, &memoryProperties);
+        for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; ++i) {
+            if ((typeFilter & (1u << i)) != 0 &&
+                (memoryProperties.memoryTypes[i].propertyFlags &
+                 requiredProperties) == requiredProperties) {
+                return i;
+            }
+        }
+        throw std::runtime_error("No compatible Vulkan memory type was found");
+    }
+
 private:
     VkInstance instance_ = VK_NULL_HANDLE;
     VkSurfaceKHR surface_ = VK_NULL_HANDLE;

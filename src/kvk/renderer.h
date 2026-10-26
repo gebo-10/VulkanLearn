@@ -13,6 +13,7 @@
 #include <spdlog/spdlog.h>
 
 #include <cstdint>
+#include <cstring>
 
 struct GLFWwindow;
 
@@ -28,6 +29,7 @@ public:
             vkDeviceWaitIdle(device_.handle());
         }
         shutdownImGui();
+        destroyVertexBuffer();
     }
 
     Renderer(const Renderer&) = delete;
@@ -37,6 +39,7 @@ public:
         instance_.initialize(window_);
         device_.initialize(instance_);
         swapchain_.initialize(device_, instance_.surface(), window_);
+        createVertexBuffer();
         pipeline_.initialize(device_.handle(), swapchain_.imageFormat(),
                              PipelineConfig::triangle());
         commandResources_.initialize(device_, swapchain_.imageCount());
@@ -167,11 +170,69 @@ private:
     GraphicsPipeline pipeline_;
     CommandResources commandResources_;
     SyncObjects syncObjects_;
+    VkBuffer vertexBuffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory vertexBufferMemory_ = VK_NULL_HANDLE;
+    uint32_t vertexCount_ = 0;
     uint32_t currentFrame_ = 0;
     bool framebufferResized_ = false;
     bool imguiContextCreated_ = false;
     bool imguiGlfwInitialized_ = false;
     bool imguiVulkanInitialized_ = false;
+
+    void createVertexBuffer() {
+        constexpr Vertex vertices[] = {
+            {{0.0f, -0.65f}, {1.0f, 0.2f, 0.2f}},
+            {{0.65f, 0.55f}, {0.2f, 1.0f, 0.3f}},
+            {{-0.65f, 0.55f}, {0.2f, 0.4f, 1.0f}}};
+        const VkDeviceSize bufferSize = sizeof(vertices);
+
+        VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        bufferInfo.size = bufferSize;
+        bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        checkVk(vkCreateBuffer(device_.handle(), &bufferInfo, nullptr,
+                               &vertexBuffer_),
+                "vkCreateBuffer");
+
+        VkMemoryRequirements memoryRequirements{};
+        vkGetBufferMemoryRequirements(device_.handle(), vertexBuffer_,
+                                      &memoryRequirements);
+        VkMemoryAllocateInfo allocateInfo{
+            VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        allocateInfo.allocationSize = memoryRequirements.size;
+        allocateInfo.memoryTypeIndex = device_.findMemoryType(
+            memoryRequirements.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        checkVk(vkAllocateMemory(device_.handle(), &allocateInfo, nullptr,
+                                 &vertexBufferMemory_),
+                "vkAllocateMemory");
+        checkVk(vkBindBufferMemory(device_.handle(), vertexBuffer_,
+                                   vertexBufferMemory_, 0),
+                "vkBindBufferMemory");
+
+        void* mappedMemory = nullptr;
+        checkVk(vkMapMemory(device_.handle(), vertexBufferMemory_, 0, bufferSize,
+                            0, &mappedMemory),
+                "vkMapMemory");
+        std::memcpy(mappedMemory, vertices, sizeof(vertices));
+        vkUnmapMemory(device_.handle(), vertexBufferMemory_);
+        vertexCount_ = 3;
+    }
+
+    void destroyVertexBuffer() {
+        if (device_.handle() == VK_NULL_HANDLE) {
+            return;
+        }
+        if (vertexBuffer_ != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device_.handle(), vertexBuffer_, nullptr);
+            vertexBuffer_ = VK_NULL_HANDLE;
+        }
+        if (vertexBufferMemory_ != VK_NULL_HANDLE) {
+            vkFreeMemory(device_.handle(), vertexBufferMemory_, nullptr);
+            vertexBufferMemory_ = VK_NULL_HANDLE;
+        }
+    }
 
     void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex,
                              ImDrawData* drawData) {
@@ -220,7 +281,10 @@ private:
         const VkRect2D scissor{{0, 0}, extent};
         vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
         vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-        vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+        const VkDeviceSize vertexOffset = 0;
+        vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer_,
+                               &vertexOffset);
+        vkCmdDraw(commandBuffer, vertexCount_, 1, 0, 0);
         if (imguiVulkanInitialized_ && drawData != nullptr) {
             ImGui_ImplVulkan_RenderDrawData(drawData, commandBuffer);
         }

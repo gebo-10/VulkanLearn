@@ -2,10 +2,16 @@
 
 #include <kvk/device.h>
 
+#include <cstddef>
 #include <filesystem>
 #include <vector>
 
 namespace klib::vk {
+
+struct Vertex {
+    float position[2];
+    float color[3];
+};
 
 struct PipelineConfig {
     std::filesystem::path vertexShader;
@@ -15,11 +21,22 @@ struct PipelineConfig {
     VkCullModeFlags cullMode = VK_CULL_MODE_NONE;
     VkFrontFace frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
+    std::vector<VkVertexInputBindingDescription> vertexBindings;
+    std::vector<VkVertexInputAttributeDescription> vertexAttributes;
 
     static PipelineConfig triangle() {
         const auto shaderDirectory = executableDirectory() / L"shaders";
-        return {shaderDirectory / L"triangle.vert.spv",
-                shaderDirectory / L"triangle.frag.spv"};
+        PipelineConfig config;
+        config.vertexShader = shaderDirectory / L"triangle.vert.spv";
+        config.fragmentShader = shaderDirectory / L"triangle.frag.spv";
+        config.vertexBindings.push_back(
+            {0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX});
+        config.vertexAttributes = {
+            {0, 0, VK_FORMAT_R32G32_SFLOAT,
+             static_cast<uint32_t>(offsetof(Vertex, position))},
+            {1, 0, VK_FORMAT_R32G32B32_SFLOAT,
+             static_cast<uint32_t>(offsetof(Vertex, color))}};
+        return config;
     }
 };
 
@@ -91,6 +108,14 @@ private:
 
             VkPipelineVertexInputStateCreateInfo vertexInput{
                 VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+            vertexInput.vertexBindingDescriptionCount =
+                static_cast<uint32_t>(config_.vertexBindings.size());
+            vertexInput.pVertexBindingDescriptions =
+                config_.vertexBindings.data();
+            vertexInput.vertexAttributeDescriptionCount =
+                static_cast<uint32_t>(config_.vertexAttributes.size());
+            vertexInput.pVertexAttributeDescriptions =
+                config_.vertexAttributes.data();
             VkPipelineInputAssemblyStateCreateInfo inputAssembly{
                 VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
             inputAssembly.topology = config_.topology;
