@@ -4,19 +4,19 @@
 namespace klib::vk {
 class Semaphore {
 public:
-    Semaphore(DevicePtr device) : device_(device) {
+    Semaphore(DevicePtr device) : device_(std::move(device)) {
         VkSemaphoreCreateInfo createInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
         checkVk(vkCreateSemaphore(device_->handle(), &createInfo, nullptr, &semaphore_),
                 "vkCreateSemaphore");
     }
 
-    Semaphore(DevicePtr device, VkSemaphoreCreateFlags flags) : device_(device) {
+    Semaphore(DevicePtr device, VkSemaphoreCreateFlags flags) : device_(std::move(device)) {
         VkSemaphoreCreateInfo createInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,nullptr,flags};
         checkVk(vkCreateSemaphore(device_->handle(), &createInfo, nullptr, &semaphore_),
                 "vkCreateSemaphore");
     }
     
-    Semaphore(DevicePtr device, VkSemaphoreCreateInfo& createInfo) : device_(device) {
+    Semaphore(DevicePtr device, VkSemaphoreCreateInfo& createInfo) : device_(std::move(device)) {
         createInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
         checkVk(vkCreateSemaphore(device_->handle(), &createInfo, nullptr, &semaphore_),
                 "vkCreateSemaphore");

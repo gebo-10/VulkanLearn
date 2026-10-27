@@ -3,10 +3,11 @@
 #include "glfw_window.h"
 #include "renderer_config.h"
 #include "sync_objects.h"
+#include "graphics_pipeline.h"
+
 #include <kvk/command_resources.h>
 #include <kvk/buffer.h>
 #include <kvk/device_memory.h>
-#include "graphics_pipeline.h"
 #include <kvk/image.h>
 #include <kvk/image_view.h>
 #include <kvk/sampler.h>
@@ -15,7 +16,6 @@
 #include <kvk/descriptor_set_layout.h>
 #include <kvk/swapchain.h>
 #include <kvk/surface.h>
-
 #include <kvk/transient_command_pool.h>
 
 
