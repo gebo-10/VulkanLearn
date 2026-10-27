@@ -8,14 +8,27 @@ namespace klib::vk {
 
 class ShaderModule {
 public:
-    ShaderModule(DevicePtr device, VkShaderModuleCreateInfo createInfo)
-        : device_(std::move(device)) {
+    ShaderModule(DevicePtr device, VkShaderModuleCreateInfo createInfo) : device_(device) {
         if (!device_) {
             throw std::invalid_argument("ShaderModule requires a valid Device");
         }
         createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
         checkVk(vkCreateShaderModule(device_->handle(), &createInfo, nullptr,
                                      &module_),
+                "vkCreateShaderModule");
+    }
+
+    ShaderModule(DevicePtr device, const std::vector<char>& code) : device_(device) {
+        if (!device_) {
+            throw std::invalid_argument("ShaderModule requires a valid Device");
+        }
+        if(code.empty()) {
+            throw std::invalid_argument("ShaderModule requires non-empty code");
+        }
+        VkShaderModuleCreateInfo createInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        createInfo.codeSize = code.size();
+        createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+        checkVk(vkCreateShaderModule(device_->handle(), &createInfo, nullptr, &module_),
                 "vkCreateShaderModule");
     }
 

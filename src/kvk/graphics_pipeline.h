@@ -88,19 +88,11 @@ private:
     PipelinePtr pipeline_;
     PipelineConfig config_;
 
-    ShaderModulePtr createShaderModule(const std::vector<char>& code) const {
-        VkShaderModuleCreateInfo createInfo{
-            VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        createInfo.codeSize = code.size();
-        createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
-        return std::make_shared<ShaderModule>(device_, createInfo);
-    }
-
     void create() {
         const auto vertexCode = readFile(config_.vertexShader);
         const auto fragmentCode = readFile(config_.fragmentShader);
-        const ShaderModulePtr vertexShader = createShaderModule(vertexCode);
-        const ShaderModulePtr fragmentShader = createShaderModule(fragmentCode);
+        const ShaderModulePtr vertexShader =  std::make_shared<ShaderModule>(device_, vertexCode);
+        const ShaderModulePtr fragmentShader = std::make_shared<ShaderModule>(device_, fragmentCode);
 
         VkPipelineShaderStageCreateInfo vertexStage{
             VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
