@@ -1,21 +1,26 @@
 #pragma once
 #include <vulkan/vulkan.h>
 #include <kvk/fence.h>
-#include <kvk/renderer_config.h>
 #include <kvk/semaphore.h>
 
-#include <array>
+#include <cstdint>
 #include <memory>
+#include <vector>
 
 namespace klib::vk {
 
 class SyncObjects {
 public:
-    explicit SyncObjects(DevicePtr device) {
+    SyncObjects(DevicePtr device, uint32_t framesInFlight)
+        : frames_(framesInFlight) {
         if (!device) {
             throw std::invalid_argument("SyncObjects requires a valid Device");
         }
-        for (uint32_t i = 0; i < kFramesInFlight; ++i) {
+        if (framesInFlight == 0) {
+            throw std::invalid_argument(
+                "SyncObjects requires at least one frame in flight");
+        }
+        for (uint32_t i = 0; i < framesInFlight; ++i) {
             frames_[i].imageAvailable = std::make_shared<Semaphore>(device);
             frames_[i].renderFinished = std::make_shared<Semaphore>(device);
             frames_[i].fence =
@@ -51,7 +56,7 @@ public:
     }
 
 private:
-    std::array<FrameSync, kFramesInFlight> frames_{};
+    std::vector<FrameSync> frames_;
 };
 
 using SyncObjectsPtr = std::shared_ptr<SyncObjects>;

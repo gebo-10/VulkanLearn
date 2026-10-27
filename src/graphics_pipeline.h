@@ -1,5 +1,7 @@
 #pragma once
 
+#include "utils.h"
+
 #include <kvk/pipeline.h>
 #include <kvk/pipeline_layout.h>
 #include <kvk/shader_module.h>
@@ -8,7 +10,9 @@
 #include <filesystem>
 #include <vector>
 
-namespace klib::vk {
+namespace LearnVulkan {
+
+using namespace klib::vk;
 
 struct Vertex {
     float position[2];
@@ -191,4 +195,4 @@ private:
 
 using GraphicsPipelinePtr = std::shared_ptr<GraphicsPipeline>;
 
-}  // namespace klib::vk
+}  // namespace LearnVulkan

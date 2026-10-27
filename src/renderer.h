@@ -1,10 +1,11 @@
 #pragma once
 
 #include "renderer_config.h"
+#include "sync_objects.h"
 #include <kvk/command_resources.h>
 #include <kvk/buffer.h>
 #include <kvk/device_memory.h>
-#include <kvk/graphics_pipeline.h>
+#include "graphics_pipeline.h"
 #include <kvk/image.h>
 #include <kvk/image_view.h>
 #include <kvk/sampler.h>
@@ -12,7 +13,7 @@
 #include <kvk/descriptor_set.h>
 #include <kvk/descriptor_set_layout.h>
 #include <kvk/swapchain.h>
-#include <kvk/sync_objects.h>
+
 #include <kvk/window.h>
 #include <kvk/transient_command_pool.h>
 
@@ -22,6 +23,7 @@
 #include <backends/imgui_impl_vulkan.h>
 #include <stb_image.h>
 #include <spdlog/spdlog.h>
+
 
 #include <array>
 #include <cstddef>
@@ -33,7 +35,9 @@
 
 struct GLFWwindow;
 
-namespace klib::vk {
+namespace LearnVulkan {
+
+using namespace klib::vk;
 
 class Renderer {
 public:
@@ -54,7 +58,7 @@ public:
             PipelineConfig::triangle(textureDescriptorSetLayout_->handle()));
         commandResources_ = std::make_shared<CommandResources>(
             device_, swapchain_->imageCount());
-        syncObjects_ = std::make_shared<SyncObjects>(device_);
+        syncObjects_ = std::make_shared<SyncObjects>(device_, kFramesInFlight);
         try {
             createImGui(nativeWindow);
         } catch (...) {
@@ -541,4 +545,4 @@ private:
     }
 };
 
-}  // namespace klib::vk
+}  // namespace LearnVulkan

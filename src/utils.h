@@ -13,14 +13,6 @@
 #include <vector>
 
 namespace klib::vk {
-
-inline void checkVk(VkResult result, const char* operation) {
-    if (result != VK_SUCCESS) {
-        throw std::runtime_error(std::string(operation) + " failed (VkResult " +
-                                 std::to_string(result) + ")");
-    }
-}
-
 inline std::filesystem::path executableDirectory() {
     std::wstring path(32768, L'\0');
     const DWORD length = GetModuleFileNameW(nullptr, path.data(),

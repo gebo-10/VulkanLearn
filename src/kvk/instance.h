@@ -1,11 +1,18 @@
 #pragma once
 
-#include <kvk/utils.h>
-#include <kvk/window.h>
-
+#include <stdexcept>
+#include <string>
 #include <memory>
 
+#include <kvk/window.h>
 namespace klib::vk {
+
+inline void checkVk(VkResult result, const char* operation) {
+    if (result != VK_SUCCESS) {
+        throw std::runtime_error(std::string(operation) + " failed (VkResult " +
+                                 std::to_string(result) + ")");
+    }
+}
 
 class Instance {
 public:

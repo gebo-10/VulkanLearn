@@ -1,4 +1,4 @@
-#include <kvk/renderer.h>
+#include "renderer.h"
 #include "glfw_window.h"
 
 #include <imgui.h>
@@ -14,9 +14,9 @@ int main() {
     int exitCode = 0;
     try {
         LearnVulkan::GlfwWindow window(
-            klib::vk::kWindowWidth, klib::vk::kWindowHeight,
+            LearnVulkan::kWindowWidth, LearnVulkan::kWindowHeight,
             "Vulkan 1.4 - Triangle");
-        klib::vk::Renderer renderer(window, window.nativeHandle());
+        LearnVulkan::Renderer renderer(window, window.nativeHandle());
 
         bool showDemoWindow = true;
         std::array<float, 3> triangleColor{1.0f, 1.0f, 1.0f};
