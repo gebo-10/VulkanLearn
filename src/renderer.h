@@ -5,7 +5,7 @@
 #include "sync_objects.h"
 #include "graphics_pipeline.h"
 
-#include <kvk/command_resources.h>
+#include "command_resources.h"
 #include <kvk/buffer.h>
 #include <kvk/device_memory.h>
 #include <kvk/image.h>
@@ -16,7 +16,7 @@
 #include <kvk/descriptor_set_layout.h>
 #include <kvk/swapchain.h>
 #include <kvk/surface.h>
-#include <kvk/transient_command_pool.h>
+#include "transient_command_pool.h"
 
 
 #include <imgui.h>

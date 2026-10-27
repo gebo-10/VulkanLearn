@@ -3,7 +3,9 @@
 
 #include <memory>
 
-namespace klib::vk {
+namespace LearnVulkan {
+
+using namespace klib::vk;
 
 // TransientCommandPool.h
 class TransientCommandPool {

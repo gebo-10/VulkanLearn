@@ -6,7 +6,9 @@
 #include <memory>
 #include <vector>
 
-namespace klib::vk {
+namespace LearnVulkan {
+
+using namespace klib::vk;
 
 class CommandResources {
 public:
@@ -49,4 +51,4 @@ private:
 
 using CommandResourcesPtr = std::shared_ptr<CommandResources>;
 
-}  // namespace klib::vk
+}  // namespace LearnVulkan
