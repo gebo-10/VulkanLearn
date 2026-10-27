@@ -1,30 +1,26 @@
 #include <kvk/command_pool.h>
 #include <kvk/fence.h>
 
+#include <memory>
+
 namespace klib::vk {
 
 // TransientCommandPool.h
 class TransientCommandPool {
 public:
-    TransientCommandPool() = default;
-    ~TransientCommandPool() { destroy(); }
-    TransientCommandPool(const TransientCommandPool&) = delete;
-    TransientCommandPool& operator=(const TransientCommandPool&) = delete;
-
-    void initialize(DevicePtr device, uint32_t queueFamilyIndex) {
-        if (!device) {
+    TransientCommandPool(DevicePtr device, uint32_t queueFamilyIndex)
+        : device_(std::move(device)) {
+        if (!device_) {
             throw std::invalid_argument(
                 "TransientCommandPool requires a valid Device");
         }
-        device_ = std::move(device);
         pool_ = std::make_shared<CommandPool>(
             device_, queueFamilyIndex, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
     }
 
-    void destroy() {
-        pool_.reset();
-        device_.reset();
-    }
+    ~TransientCommandPool() = default;
+    TransientCommandPool(const TransientCommandPool&) = delete;
+    TransientCommandPool& operator=(const TransientCommandPool&) = delete;
 
     // 同步一次性执行：阻塞到 GPU 完成
     template <typename F>
@@ -35,7 +31,7 @@ public:
         end(cmd);
         submit(queue, cmd);
         free(cmd);
-    }
+    };
 
     // 异步一次性执行：返回后调用方负责 fence 等待
     template <typename F>
@@ -99,4 +95,6 @@ private:
     DevicePtr device_;
     CommandPoolPtr pool_;
 };
+
+using TransientCommandPoolPtr = std::shared_ptr<TransientCommandPool>;
 }

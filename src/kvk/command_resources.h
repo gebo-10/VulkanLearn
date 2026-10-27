@@ -3,19 +3,14 @@
 #include <kvk/command_buffer.h>
 #include <kvk/command_pool.h>
 
+#include <memory>
 #include <vector>
 
 namespace klib::vk {
 
 class CommandResources {
 public:
-    CommandResources() = default;
-    ~CommandResources() = default;
-
-    CommandResources(const CommandResources&) = delete;
-    CommandResources& operator=(const CommandResources&) = delete;
-
-    void initialize(DevicePtr device, uint32_t commandBufferCount) {
+    CommandResources(DevicePtr device, uint32_t commandBufferCount) {
         if (!device) {
             throw std::invalid_argument(
                 "CommandResources requires a valid Device");
@@ -25,6 +20,11 @@ public:
             std::make_shared<CommandPool>(std::move(device), queueFamilyIndex);
         allocate(commandBufferCount);
     }
+
+    ~CommandResources() = default;
+
+    CommandResources(const CommandResources&) = delete;
+    CommandResources& operator=(const CommandResources&) = delete;
 
     void recreate(uint32_t commandBufferCount) {
         commandBuffers_.clear();
@@ -46,5 +46,7 @@ private:
         }
     }
 };
+
+using CommandResourcesPtr = std::shared_ptr<CommandResources>;
 
 }  // namespace klib::vk

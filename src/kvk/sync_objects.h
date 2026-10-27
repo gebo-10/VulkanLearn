@@ -5,24 +5,13 @@
 #include <kvk/semaphore.h>
 
 #include <array>
+#include <memory>
 
 namespace klib::vk {
 
 class SyncObjects {
 public:
-    SyncObjects() = default;
-    ~SyncObjects() = default;
-
-    SyncObjects(const SyncObjects&) = delete;
-    SyncObjects& operator=(const SyncObjects&) = delete;
-
-    struct FrameSync {
-        SemaphorePtr imageAvailable;
-        SemaphorePtr renderFinished;
-        FencePtr fence;
-    };
-
-    void initialize(DevicePtr device) {
+    explicit SyncObjects(DevicePtr device) {
         if (!device) {
             throw std::invalid_argument("SyncObjects requires a valid Device");
         }
@@ -33,6 +22,17 @@ public:
                 std::make_shared<Fence>(device, VK_FENCE_CREATE_SIGNALED_BIT);
         }
     }
+
+    ~SyncObjects() = default;
+
+    SyncObjects(const SyncObjects&) = delete;
+    SyncObjects& operator=(const SyncObjects&) = delete;
+
+    struct FrameSync {
+        SemaphorePtr imageAvailable;
+        SemaphorePtr renderFinished;
+        FencePtr fence;
+    };
 
     VkSemaphore imageAvailable(uint32_t frame) const {
         return frames_.at(frame).imageAvailable->handle();
@@ -53,5 +53,7 @@ public:
 private:
     std::array<FrameSync, kFramesInFlight> frames_{};
 };
+
+using SyncObjectsPtr = std::shared_ptr<SyncObjects>;
 
 }  // namespace klib::vk

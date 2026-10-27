@@ -3,17 +3,13 @@
 #include <kvk/utils.h>
 #include <kvk/window.h>
 
+#include <memory>
+
 namespace klib::vk {
 
 class Instance {
 public:
-    Instance() = default;
-    ~Instance() { reset(); }
-
-    Instance(const Instance&) = delete;
-    Instance& operator=(const Instance&) = delete;
-
-    void initialize(const Window& window) {
+    explicit Instance(const Window& window) {
         VkApplicationInfo appInfo{VK_STRUCTURE_TYPE_APPLICATION_INFO};
         appInfo.pApplicationName = "Vulkan 1.4 Triangle";
         appInfo.applicationVersion = VK_MAKE_API_VERSION(0, 1, 0, 0);
@@ -45,6 +41,11 @@ public:
         }
     }
 
+    ~Instance() { reset(); }
+
+    Instance(const Instance&) = delete;
+    Instance& operator=(const Instance&) = delete;
+
     VkInstance handle() const { return instance_; }
     VkSurfaceKHR surface() const { return surface_; }
 
@@ -63,5 +64,7 @@ private:
         }
     }
 };
+
+using InstancePtr = std::shared_ptr<Instance>;
 
 }  // namespace klib::vk

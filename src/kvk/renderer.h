@@ -37,7 +37,32 @@ namespace klib::vk {
 
 class Renderer {
 public:
-    explicit Renderer(Window& window) : window_(window) {}
+    Renderer(Window& window, GLFWwindow* nativeWindow) : window_(window) {
+        instance_ = std::make_shared<Instance>(window_);
+        device_ = std::make_shared<Device>(instance_);
+        swapchain_ = std::make_shared<Swapchain>(
+            device_, instance_->surface(), window_);
+        transients_ = std::make_shared<TransientCommandPool>(
+            device_, device_->graphicsQueueFamily());
+
+        createVertexBuffer();
+        createTextureImage();
+        createTextureSampler();
+        createTextureDescriptor();
+        pipeline_ = std::make_shared<GraphicsPipeline>(
+            device_, swapchain_->imageFormat(),
+            PipelineConfig::triangle(textureDescriptorSetLayout_->handle()));
+        commandResources_ = std::make_shared<CommandResources>(
+            device_, swapchain_->imageCount());
+        syncObjects_ = std::make_shared<SyncObjects>(device_);
+        try {
+            createImGui(nativeWindow);
+        } catch (...) {
+            shutdownImGui();
+            throw;
+        }
+        window_.setResizeCallback([this] { framebufferResized_ = true; });
+    }
 
     ~Renderer() {
         window_.setResizeCallback({});
@@ -45,35 +70,13 @@ public:
             vkDeviceWaitIdle(device_->handle());
         }
         shutdownImGui();
-        pipeline_.shutdown();
-        destroyTextureResources();
-        destroyVertexBuffer();
     }
 
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
 
-    void initialize() {
-        instance_.initialize(window_);
-        device_->initialize(instance_);
-        swapchain_.initialize(device_, instance_.surface(), window_);
-
-        transients_.initialize(device_, device_->graphicsQueueFamily());
-
-        createVertexBuffer();
-        createTextureImage();
-        createTextureSampler();
-        createTextureDescriptor();
-        pipeline_.initialize(device_, swapchain_.imageFormat(),
-                             PipelineConfig::triangle(
-                                 textureDescriptorSetLayout_->handle()));
-        commandResources_.initialize(device_, swapchain_.imageCount());
-        syncObjects_.initialize(device_);
-        window_.setResizeCallback([this] { framebufferResized_ = true; });
-
-    }
-
-    void initializeImGui(GLFWwindow* window) {
+private:
+    void createImGui(GLFWwindow* window) {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         imguiContextCreated_ = true;
@@ -104,20 +107,20 @@ public:
 
         VkPipelineRenderingCreateInfo renderingInfo{
             VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-        const VkFormat colorFormat = swapchain_.imageFormat();
+        const VkFormat colorFormat = swapchain_->imageFormat();
         renderingInfo.colorAttachmentCount = 1;
         renderingInfo.pColorAttachmentFormats = &colorFormat;
 
         ImGui_ImplVulkan_InitInfo initInfo{};
         initInfo.ApiVersion = VK_API_VERSION_1_4;
-        initInfo.Instance = instance_.handle();
+        initInfo.Instance = instance_->handle();
         initInfo.PhysicalDevice = device_->physicalDevice();
         initInfo.Device = device_->handle();
         initInfo.QueueFamily = device_->graphicsQueueFamily();
         initInfo.Queue = device_->graphicsQueue();
         initInfo.DescriptorPoolSize = 1000;
         initInfo.MinImageCount = 2;
-        initInfo.ImageCount = swapchain_.imageCount();
+        initInfo.ImageCount = swapchain_->imageCount();
         initInfo.UseDynamicRendering = true;
         initInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
         initInfo.PipelineInfoMain.PipelineRenderingCreateInfo = renderingInfo;
@@ -127,16 +130,17 @@ public:
         imguiVulkanInitialized_ = true;
     }
 
+public:
     void drawFrame(ImDrawData* drawData) {
-        const VkFence frameFence = syncObjects_.fence(currentFrame_);
+        const VkFence frameFence = syncObjects_->fence(currentFrame_);
         checkVk(vkWaitForFences(device_->handle(), 1, &frameFence, VK_TRUE,
                                 UINT64_MAX),
                 "vkWaitForFences");
 
         uint32_t imageIndex = 0;
         const VkResult acquireResult = vkAcquireNextImageKHR(
-            device_->handle(), swapchain_.handle(), UINT64_MAX,
-            syncObjects_.imageAvailable(currentFrame_), VK_NULL_HANDLE,
+            device_->handle(), swapchain_->handle(), UINT64_MAX,
+            syncObjects_->imageAvailable(currentFrame_), VK_NULL_HANDLE,
             &imageIndex);
         if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
             recreateSwapchain();
@@ -147,16 +151,16 @@ public:
         }
 
         checkVk(vkResetFences(device_->handle(), 1, &frameFence), "vkResetFences");
-        VkCommandBuffer commandBuffer = commandResources_.handle(imageIndex);
+        VkCommandBuffer commandBuffer = commandResources_->handle(imageIndex);
         checkVk(vkResetCommandBuffer(commandBuffer, 0), "vkResetCommandBuffer");
         recordCommandBuffer(commandBuffer, imageIndex, drawData);
 
         const VkPipelineStageFlags waitStage =
             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         const VkSemaphore imageAvailable =
-            syncObjects_.imageAvailable(currentFrame_);
+            syncObjects_->imageAvailable(currentFrame_);
         const VkSemaphore renderFinished =
-            syncObjects_.renderFinished(currentFrame_);
+            syncObjects_->renderFinished(currentFrame_);
         VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
         submitInfo.waitSemaphoreCount = 1;
         submitInfo.pWaitSemaphores = &imageAvailable;
@@ -168,7 +172,7 @@ public:
         checkVk(vkQueueSubmit(device_->graphicsQueue(), 1, &submitInfo, frameFence),
                 "vkQueueSubmit");
 
-        const VkSwapchainKHR swapchain = swapchain_.handle();
+        const VkSwapchainKHR swapchain = swapchain_->handle();
         VkPresentInfoKHR presentInfo{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
         presentInfo.waitSemaphoreCount = 1;
         presentInfo.pWaitSemaphores = &renderFinished;
@@ -199,23 +203,23 @@ private:
     };
 
     Window& window_;
-    Instance instance_;
-    DevicePtr device_ = std::make_shared<Device>();
-    Swapchain swapchain_;
-    GraphicsPipeline pipeline_;
-    CommandResources commandResources_;
-    SyncObjects syncObjects_;
+    InstancePtr instance_;
+    DevicePtr device_;
+    SwapchainPtr swapchain_;
+    DescriptorSetLayoutPtr textureDescriptorSetLayout_;
+    GraphicsPipelinePtr pipeline_;
+    CommandResourcesPtr commandResources_;
+    SyncObjectsPtr syncObjects_;
     DeviceMemoryPtr vertexBufferMemory_;
     BufferPtr vertexBuffer_;
     DeviceMemoryPtr indexBufferMemory_;
     BufferPtr indexBuffer_;
     uint32_t indexCount_ = 0;
-    TransientCommandPool transients_;
+    TransientCommandPoolPtr transients_;
     DeviceMemoryPtr textureImageMemory_;
     ImagePtr textureImage_;
     ImageViewPtr textureImageView_;
     SamplerPtr textureSampler_;
-    DescriptorSetLayoutPtr textureDescriptorSetLayout_;
     DescriptorPoolPtr textureDescriptorPool_;
     DescriptorSetPtr textureDescriptorSet_;
     std::array<float, 4> triangleColor_{1.0f, 1.0f, 1.0f, 1.0f};
@@ -337,7 +341,7 @@ private:
     }
 
     void uploadTexture(VkBuffer stagingBuffer, uint32_t width, uint32_t height) {
-        transients_.oneShot(device_->graphicsQueue(), [&](VkCommandBuffer cmd) {
+        transients_->oneShot(device_->graphicsQueue(), [&](VkCommandBuffer cmd) {
             // ① barrier: UNDEFINED → TRANSFER_DST_OPTIMAL
             VkImageMemoryBarrier toTransfer{
                 VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -423,29 +427,6 @@ private:
         textureDescriptorSet_->update(2, writes);
     }
 
-    void destroyTextureResources() {
-        if (!device_ || device_->handle() == VK_NULL_HANDLE) {
-            return;
-        }
-        textureDescriptorSet_.reset();
-        textureDescriptorPool_.reset();
-        textureSampler_.reset();
-        textureImageView_.reset();
-        textureImage_.reset();
-        textureImageMemory_.reset();
-        textureDescriptorSetLayout_.reset();
-    }
-
-    void destroyVertexBuffer() {
-        if (!device_ || device_->handle() == VK_NULL_HANDLE) {
-            return;
-        }
-        vertexBuffer_.reset();
-        vertexBufferMemory_.reset();
-        indexBuffer_.reset();
-        indexBufferMemory_.reset();
-    }
-
     void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex,
                              ImDrawData* drawData) {
         VkCommandBufferBeginInfo beginInfo{
@@ -459,7 +440,7 @@ private:
         toColorAttachment.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         toColorAttachment.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         toColorAttachment.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        toColorAttachment.image = swapchain_.images()[imageIndex];
+        toColorAttachment.image = swapchain_->images()[imageIndex];
         toColorAttachment.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         toColorAttachment.subresourceRange.levelCount = 1;
         toColorAttachment.subresourceRange.layerCount = 1;
@@ -470,13 +451,13 @@ private:
 
         VkRenderingAttachmentInfo colorAttachment{
             VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-        colorAttachment.imageView = swapchain_.imageViews()[imageIndex];
+        colorAttachment.imageView = swapchain_->imageViews()[imageIndex];
         colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         colorAttachment.clearValue.color = {{0.04f, 0.05f, 0.08f, 1.0f}};
 
-        const VkExtent2D extent = swapchain_.extent();
+        const VkExtent2D extent = swapchain_->extent();
         VkRenderingInfo renderingInfo{VK_STRUCTURE_TYPE_RENDERING_INFO};
         renderingInfo.renderArea = {{0, 0}, extent};
         renderingInfo.layerCount = 1;
@@ -484,13 +465,13 @@ private:
         renderingInfo.pColorAttachments = &colorAttachment;
         vkCmdBeginRendering(commandBuffer, &renderingInfo);
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          pipeline_.handle());
+                          pipeline_->handle());
         const VkDescriptorSet textureDescriptor =
             textureDescriptorSet_->handle();
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                pipeline_.layout(), 0, 1, &textureDescriptor, 0,
+                                pipeline_->layout(), 0, 1, &textureDescriptor, 0,
                                 nullptr);
-        vkCmdPushConstants(commandBuffer, pipeline_.layout(),
+        vkCmdPushConstants(commandBuffer, pipeline_->layout(),
                            VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                            sizeof(triangleColor_), triangleColor_.data());
 
@@ -520,7 +501,7 @@ private:
         toPresent.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
         toPresent.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         toPresent.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        toPresent.image = swapchain_.images()[imageIndex];
+        toPresent.image = swapchain_->images()[imageIndex];
         toPresent.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         toPresent.subresourceRange.levelCount = 1;
         toPresent.subresourceRange.layerCount = 1;
@@ -539,9 +520,9 @@ private:
         }
 
         device_->waitIdle();
-        swapchain_.recreate();
-        pipeline_.recreate(swapchain_.imageFormat());
-        commandResources_.recreate(swapchain_.imageCount());
+        swapchain_->recreate(device_);
+        pipeline_->recreate(swapchain_->imageFormat());
+        commandResources_->recreate(swapchain_->imageCount());
     }
 
     void shutdownImGui() {

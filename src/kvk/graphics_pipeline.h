@@ -49,23 +49,22 @@ struct PipelineConfig {
 
 class GraphicsPipeline {
 public:
-    GraphicsPipeline() = default;
+    GraphicsPipeline(DevicePtr device, VkFormat colorFormat,
+                     const PipelineConfig& config)
+        : device_(std::move(device)),
+          colorFormat_(colorFormat),
+          config_(config) {
+        if (!device_) {
+            throw std::invalid_argument(
+                "GraphicsPipeline requires a valid Device");
+        }
+        create();
+    }
+
     ~GraphicsPipeline() { reset(); }
 
     GraphicsPipeline(const GraphicsPipeline&) = delete;
     GraphicsPipeline& operator=(const GraphicsPipeline&) = delete;
-
-    void initialize(DevicePtr device, VkFormat colorFormat,
-                    const PipelineConfig& config) {
-        if (!device) {
-            throw std::invalid_argument(
-                "GraphicsPipeline requires a valid Device");
-        }
-        device_ = std::move(device);
-        colorFormat_ = colorFormat;
-        config_ = config;
-        create();
-    }
 
     void recreate(VkFormat colorFormat) {
         resetHandles();
@@ -79,8 +78,6 @@ public:
     VkPipelineLayout layout() const {
         return layout_ ? layout_->handle() : VK_NULL_HANDLE;
     }
-    void shutdown() { resetHandles(); }
-
 private:
     DevicePtr device_;
     VkFormat colorFormat_ = VK_FORMAT_UNDEFINED;
@@ -191,5 +188,7 @@ private:
         }
     }
 };
+
+using GraphicsPipelinePtr = std::shared_ptr<GraphicsPipeline>;
 
 }  // namespace klib::vk

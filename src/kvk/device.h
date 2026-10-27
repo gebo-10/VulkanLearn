@@ -22,15 +22,12 @@ struct QueueFamilyIndices {
 
 class Device {
 public:
-    Device() = default;
-    ~Device() { reset(); }
-
-    Device(const Device&) = delete;
-    Device& operator=(const Device&) = delete;
-
-    void initialize(const Instance& instance) {
-        instance_ = instance.handle();
-        surface_ = instance.surface();
+    explicit Device(InstancePtr instance) : instanceOwner_(std::move(instance)) {
+        if (!instanceOwner_) {
+            throw std::invalid_argument("Device requires a valid Instance");
+        }
+        instance_ = instanceOwner_->handle();
+        surface_ = instanceOwner_->surface();
 
         uint32_t count = 0;
         checkVk(vkEnumeratePhysicalDevices(instance_, &count, nullptr),
@@ -77,6 +74,11 @@ public:
             "presentation");
     }
 
+    ~Device() { reset(); }
+
+    Device(const Device&) = delete;
+    Device& operator=(const Device&) = delete;
+
     VkPhysicalDevice physicalDevice() const { return physicalDevice_; }
     VkDevice handle() const { return device_; }
     VkQueue graphicsQueue() const { return graphicsQueue_; }
@@ -102,6 +104,7 @@ public:
     }
 
 private:
+    InstancePtr instanceOwner_;
     VkInstance instance_ = VK_NULL_HANDLE;
     VkSurfaceKHR surface_ = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;

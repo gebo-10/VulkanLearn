@@ -9,22 +9,20 @@ namespace klib::vk {
 
 class SwapchainHandle {
 public:
-    SwapchainHandle(DevicePtr device,
+    SwapchainHandle(VkDevice device,
                     VkSwapchainCreateInfoKHR createInfo)
-        : device_(std::move(device)) {
-        if (!device_) {
-            throw std::invalid_argument(
-                "SwapchainHandle requires a valid Device");
+        : device_(device) {
+        if (device_ == VK_NULL_HANDLE) {
+            throw std::invalid_argument("SwapchainHandle requires a valid device");
         }
         createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-        checkVk(vkCreateSwapchainKHR(device_->handle(), &createInfo, nullptr,
-                                     &swapchain_),
+        checkVk(vkCreateSwapchainKHR(device_, &createInfo, nullptr, &swapchain_),
                 "vkCreateSwapchainKHR");
     }
 
     ~SwapchainHandle() {
         if (swapchain_ != VK_NULL_HANDLE) {
-            vkDestroySwapchainKHR(device_->handle(), swapchain_, nullptr);
+            vkDestroySwapchainKHR(device_, swapchain_, nullptr);
         }
     }
 
@@ -40,13 +38,12 @@ public:
 
     std::vector<VkImage> images() const {
         uint32_t count = 0;
-        checkVk(vkGetSwapchainImagesKHR(device_->handle(), swapchain_, &count,
-                                        nullptr),
+        checkVk(vkGetSwapchainImagesKHR(device_, swapchain_, &count, nullptr),
                 "vkGetSwapchainImagesKHR");
         std::vector<VkImage> swapchainImages(count);
         if (count != 0) {
-            checkVk(vkGetSwapchainImagesKHR(device_->handle(), swapchain_,
-                                            &count, swapchainImages.data()),
+            checkVk(vkGetSwapchainImagesKHR(device_, swapchain_, &count,
+                                            swapchainImages.data()),
                     "vkGetSwapchainImagesKHR");
             swapchainImages.resize(count);
         }
@@ -55,12 +52,12 @@ public:
 
     VkResult acquireNextImage(uint64_t timeout, VkSemaphore semaphore,
                               VkFence fence, uint32_t& imageIndex) const {
-        return vkAcquireNextImageKHR(device_->handle(), swapchain_, timeout,
-                                     semaphore, fence, &imageIndex);
+        return vkAcquireNextImageKHR(device_, swapchain_, timeout, semaphore,
+                                     fence, &imageIndex);
     }
 
 private:
-    DevicePtr device_;
+    VkDevice device_ = VK_NULL_HANDLE;
     VkSwapchainKHR swapchain_ = VK_NULL_HANDLE;
 };
 

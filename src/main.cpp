@@ -16,9 +16,7 @@ int main() {
         LearnVulkan::GlfwWindow window(
             klib::vk::kWindowWidth, klib::vk::kWindowHeight,
             "Vulkan 1.4 - Triangle");
-        klib::vk::Renderer renderer(window);
-        renderer.initialize();
-        renderer.initializeImGui(window.nativeHandle());
+        klib::vk::Renderer renderer(window, window.nativeHandle());
 
         bool showDemoWindow = true;
         std::array<float, 3> triangleColor{1.0f, 1.0f, 1.0f};

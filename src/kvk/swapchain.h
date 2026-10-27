@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <memory>
 #include <vector>
 
 namespace klib::vk {
@@ -19,30 +20,31 @@ struct SwapchainSupport {
 
 class Swapchain {
 public:
-    Swapchain() = default;
+    Swapchain(DevicePtr device, VkSurfaceKHR surface, Window& window)
+        : device_(device ? device->handle() : VK_NULL_HANDLE),
+          physicalDevice_(device ? device->physicalDevice() : VK_NULL_HANDLE),
+          surface_(surface),
+          window_(&window),
+          deviceGraphicsQueueFamily_(device ? device->graphicsQueueFamily() : 0),
+          devicePresentQueueFamily_(device ? device->presentQueueFamily() : 0) {
+        if (!device) {
+            throw std::invalid_argument("Swapchain requires a valid Device");
+        }
+        create(device);
+    }
+
     ~Swapchain() { reset(); }
 
     Swapchain(const Swapchain&) = delete;
     Swapchain& operator=(const Swapchain&) = delete;
 
-    void initialize(DevicePtr device, VkSurfaceKHR surface,
-                    Window& window) {
-        if (!device) {
-            throw std::invalid_argument("Swapchain requires a valid Device");
+    void recreate(DevicePtr device) {
+        if (!device || device->handle() != device_) {
+            throw std::invalid_argument(
+                "Swapchain recreation requires its original Device");
         }
-        deviceOwner_ = std::move(device);
-        device_ = deviceOwner_->handle();
-        physicalDevice_ = deviceOwner_->physicalDevice();
-        deviceGraphicsQueueFamily_ = deviceOwner_->graphicsQueueFamily();
-        devicePresentQueueFamily_ = deviceOwner_->presentQueueFamily();
-        surface_ = surface;
-        window_ = &window;
-        create();
-    }
-
-    void recreate() {
         destroyResources();
-        create();
+        create(device);
     }
 
     VkSwapchainKHR handle() const { return swapchain_; }
@@ -54,7 +56,6 @@ public:
 
 private:
     VkDevice device_ = VK_NULL_HANDLE;
-    DevicePtr deviceOwner_;
     VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
     VkSurfaceKHR surface_ = VK_NULL_HANDLE;
     Window* window_ = nullptr;
@@ -155,7 +156,7 @@ private:
         throw std::runtime_error("Surface has no supported composite alpha mode");
     }
 
-    void create() {
+    void create(const DevicePtr& device) {
         const SwapchainSupport support = querySupport();
         const VkSurfaceFormatKHR surfaceFormat = chooseSurfaceFormat(support.formats);
         const VkPresentModeKHR presentMode =
@@ -202,24 +203,23 @@ private:
 
         try {
             swapchainObject_ =
-                std::make_shared<SwapchainHandle>(deviceOwner_, createInfo);
+                std::make_shared<SwapchainHandle>(device_, createInfo);
             swapchain_ = swapchainObject_->handle();
             images_ = swapchainObject_->images();
             imageFormat_ = surfaceFormat.format;
-            createImageViews();
+            createImageViews(device);
         } catch (...) {
             destroyResources();
             throw;
         }
     }
 
-    void createImageViews() {
+    void createImageViews(const DevicePtr& device) {
         imageViews_.resize(images_.size(), VK_NULL_HANDLE);
         imageViewObjects_.resize(images_.size());
         for (size_t i = 0; i < images_.size(); ++i) {
             imageViewObjects_[i] = std::make_shared<ImageView>(
-                deviceOwner_, images_[i], imageFormat_,
-                VK_IMAGE_ASPECT_COLOR_BIT);
+                device, images_[i], imageFormat_, VK_IMAGE_ASPECT_COLOR_BIT);
             imageViews_[i] = imageViewObjects_[i]->handle();
         }
     }
@@ -241,5 +241,7 @@ private:
     uint32_t deviceGraphicsQueueFamily_ = 0;
     uint32_t devicePresentQueueFamily_ = 0;
 };
+
+using SwapchainPtr = std::shared_ptr<Swapchain>;
 
 }  // namespace klib::vk
