@@ -1,4 +1,6 @@
-#include <kvk/utils.h>
+#include <kvk/command_pool.h>
+#include <kvk/fence.h>
+
 namespace klib::vk {
 
 // TransientCommandPool.h
@@ -9,20 +11,19 @@ public:
     TransientCommandPool(const TransientCommandPool&) = delete;
     TransientCommandPool& operator=(const TransientCommandPool&) = delete;
 
-    void initialize(VkDevice device, uint32_t queueFamilyIndex) {
-        device_ = device;
-        VkCommandPoolCreateInfo info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-        info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-        info.queueFamilyIndex = queueFamilyIndex;
-        checkVk(vkCreateCommandPool(device_, &info, nullptr, &pool_),
-                "vkCreateCommandPool(transient)");
+    void initialize(DevicePtr device, uint32_t queueFamilyIndex) {
+        if (!device) {
+            throw std::invalid_argument(
+                "TransientCommandPool requires a valid Device");
+        }
+        device_ = std::move(device);
+        pool_ = std::make_shared<CommandPool>(
+            device_, queueFamilyIndex, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
     }
 
     void destroy() {
-        if (pool_ != VK_NULL_HANDLE) {
-            vkDestroyCommandPool(device_, pool_, nullptr);
-            pool_ = VK_NULL_HANDLE;
-        }
+        pool_.reset();
+        device_.reset();
     }
 
     // 同步一次性执行：阻塞到 GPU 完成
@@ -32,7 +33,7 @@ public:
         begin(cmd);
         record(cmd);
         end(cmd);
-        submit(queue, cmd);           // 内部建 fence + 等待
+        submit(queue, cmd);
         free(cmd);
     }
 
@@ -60,19 +61,13 @@ public:
 
 private:
     VkCommandBuffer allocate() {
-        VkCommandBufferAllocateInfo info{
-            VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-        info.commandPool        = pool_;
-        info.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        info.commandBufferCount = 1;
-        VkCommandBuffer cmd = VK_NULL_HANDLE;
-        checkVk(vkAllocateCommandBuffers(device_, &info, &cmd),
-                "vkAllocateCommandBuffers");
-        return cmd;
+        const auto commandBuffers =
+            pool_->allocate(1, VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+        return commandBuffers.front();
     }
 
     void free(VkCommandBuffer cmd) {
-        vkFreeCommandBuffers(device_, pool_, 1, &cmd);
+        vkFreeCommandBuffers(device_->handle(), pool_->handle(), 1, &cmd);
     }
 
     static void begin(VkCommandBuffer cmd) {
@@ -88,14 +83,9 @@ private:
 
     // 同步提交：临时 fence + 等待，避免 vkQueueWaitIdle 阻塞整个队列
     void submit(VkQueue queue, VkCommandBuffer cmd) {
-        VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-        VkFence fence = VK_NULL_HANDLE;
-        checkVk(vkCreateFence(device_, &fenceInfo, nullptr, &fence),
-                "vkCreateFence");
-        submitWithFence(queue, cmd, fence);
-        checkVk(vkWaitForFences(device_, 1, &fence, VK_TRUE, UINT64_MAX),
-                "vkWaitForFences");
-        vkDestroyFence(device_, fence, nullptr);
+        auto fence = std::make_shared<Fence>(device_);
+        submitWithFence(queue, cmd, fence->handle());
+        fence->wait();
     }
 
     static void submitWithFence(VkQueue queue, VkCommandBuffer cmd,
@@ -106,7 +96,7 @@ private:
         checkVk(vkQueueSubmit(queue, 1, &info, fence), "vkQueueSubmit");
     }
 
-    VkDevice      device_ = VK_NULL_HANDLE;
-    VkCommandPool pool_   = VK_NULL_HANDLE;
+    DevicePtr device_;
+    CommandPoolPtr pool_;
 };
 }

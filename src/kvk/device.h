@@ -5,6 +5,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -206,5 +207,5 @@ private:
         }
     }
 };
-
+typedef std::shared_ptr<Device> DevicePtr;
 }  // namespace klib::vk

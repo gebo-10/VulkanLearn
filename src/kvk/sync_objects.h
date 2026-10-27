@@ -1,7 +1,8 @@
 #pragma once
 #include <vulkan/vulkan.h>
-#include <kvk/utils.h>
+#include <kvk/fence.h>
 #include <kvk/renderer_config.h>
+#include <kvk/semaphore.h>
 
 #include <array>
 
@@ -10,69 +11,47 @@ namespace klib::vk {
 class SyncObjects {
 public:
     SyncObjects() = default;
-    ~SyncObjects() { reset(); }
+    ~SyncObjects() = default;
 
     SyncObjects(const SyncObjects&) = delete;
     SyncObjects& operator=(const SyncObjects&) = delete;
 
     struct FrameSync {
-        VkSemaphore imageAvailable = VK_NULL_HANDLE;
-        VkSemaphore renderFinished = VK_NULL_HANDLE;
-        VkFence fence = VK_NULL_HANDLE;
+        SemaphorePtr imageAvailable;
+        SemaphorePtr renderFinished;
+        FencePtr fence;
     };
 
-    void initialize(VkDevice device) {
-        device_ = device;
-        VkSemaphoreCreateInfo semaphoreInfo{
-            VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-        VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-        fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-
+    void initialize(DevicePtr device) {
+        if (!device) {
+            throw std::invalid_argument("SyncObjects requires a valid Device");
+        }
         for (uint32_t i = 0; i < kFramesInFlight; ++i) {
-            checkVk(vkCreateSemaphore(device_, &semaphoreInfo, nullptr,
-                                      &frames_[i].imageAvailable),
-                    "vkCreateSemaphore");
-            checkVk(vkCreateSemaphore(device_, &semaphoreInfo, nullptr,
-                                      &frames_[i].renderFinished),
-                    "vkCreateSemaphore");
-            checkVk(vkCreateFence(device_, &fenceInfo, nullptr, &frames_[i].fence),
-                    "vkCreateFence");
+            frames_[i].imageAvailable = std::make_shared<Semaphore>(device);
+            frames_[i].renderFinished = std::make_shared<Semaphore>(device);
+            frames_[i].fence =
+                std::make_shared<Fence>(device, VK_FENCE_CREATE_SIGNALED_BIT);
         }
     }
 
     VkSemaphore imageAvailable(uint32_t frame) const {
-        return frames_.at(frame).imageAvailable;
+        return frames_.at(frame).imageAvailable->handle();
     }
     VkSemaphore renderFinished(uint32_t frame) const {
-        return frames_.at(frame).renderFinished;
+        return frames_.at(frame).renderFinished->handle();
     }
-    VkFence fence(uint32_t frame) const { return frames_.at(frame).fence; }
+    VkFence fence(uint32_t frame) const {
+        return frames_.at(frame).fence->handle();
+    }
+    void waitForFrame(uint32_t frame, uint64_t timeout = UINT64_MAX) const {
+        frames_.at(frame).fence->wait(timeout);
+    }
+    void resetFrameFence(uint32_t frame) const {
+        frames_.at(frame).fence->reset();
+    }
 
 private:
-    VkDevice device_ = VK_NULL_HANDLE;
     std::array<FrameSync, kFramesInFlight> frames_{};
-
-    void reset() {
-        if (device_ == VK_NULL_HANDLE) {
-            return;
-        }
-        for (uint32_t i = kFramesInFlight; i > 0; --i) {
-            FrameSync& frame = frames_[i - 1];
-            if (frame.fence != VK_NULL_HANDLE) {
-                vkDestroyFence(device_, frame.fence, nullptr);
-                frame.fence = VK_NULL_HANDLE;
-            }
-            if (frame.renderFinished != VK_NULL_HANDLE) {
-                vkDestroySemaphore(device_, frame.renderFinished, nullptr);
-                frame.renderFinished = VK_NULL_HANDLE;
-            }
-            if (frame.imageAvailable != VK_NULL_HANDLE) {
-                vkDestroySemaphore(device_, frame.imageAvailable, nullptr);
-                frame.imageAvailable = VK_NULL_HANDLE;
-            }
-        }
-        device_ = VK_NULL_HANDLE;
-    }
 };
 
 }  // namespace klib::vk

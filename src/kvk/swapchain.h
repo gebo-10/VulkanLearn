@@ -1,6 +1,8 @@
 #pragma once
 
 #include <kvk/device.h>
+#include <kvk/image_view.h>
+#include <kvk/swapchain_handle.h>
 #include <kvk/window.h>
 
 #include <algorithm>
@@ -23,12 +25,16 @@ public:
     Swapchain(const Swapchain&) = delete;
     Swapchain& operator=(const Swapchain&) = delete;
 
-    void initialize(const Device& device, VkSurfaceKHR surface,
+    void initialize(DevicePtr device, VkSurfaceKHR surface,
                     Window& window) {
-        device_ = device.handle();
-        physicalDevice_ = device.physicalDevice();
-        deviceGraphicsQueueFamily_ = device.graphicsQueueFamily();
-        devicePresentQueueFamily_ = device.presentQueueFamily();
+        if (!device) {
+            throw std::invalid_argument("Swapchain requires a valid Device");
+        }
+        deviceOwner_ = std::move(device);
+        device_ = deviceOwner_->handle();
+        physicalDevice_ = deviceOwner_->physicalDevice();
+        deviceGraphicsQueueFamily_ = deviceOwner_->graphicsQueueFamily();
+        devicePresentQueueFamily_ = deviceOwner_->presentQueueFamily();
         surface_ = surface;
         window_ = &window;
         create();
@@ -48,12 +54,15 @@ public:
 
 private:
     VkDevice device_ = VK_NULL_HANDLE;
+    DevicePtr deviceOwner_;
     VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
     VkSurfaceKHR surface_ = VK_NULL_HANDLE;
     Window* window_ = nullptr;
     VkSwapchainKHR swapchain_ = VK_NULL_HANDLE;
+    SwapchainHandlePtr swapchainObject_;
     std::vector<VkImage> images_;
     std::vector<VkImageView> imageViews_;
+    std::vector<ImageViewPtr> imageViewObjects_;
     VkFormat imageFormat_ = VK_FORMAT_UNDEFINED;
     VkExtent2D extent_{};
 
@@ -191,16 +200,11 @@ private:
         createInfo.presentMode = presentMode;
         createInfo.clipped = VK_TRUE;
 
-        checkVk(vkCreateSwapchainKHR(device_, &createInfo, nullptr, &swapchain_),
-                "vkCreateSwapchainKHR");
         try {
-            checkVk(vkGetSwapchainImagesKHR(device_, swapchain_, &imageCount,
-                                            nullptr),
-                    "vkGetSwapchainImagesKHR");
-            images_.resize(imageCount);
-            checkVk(vkGetSwapchainImagesKHR(device_, swapchain_, &imageCount,
-                                            images_.data()),
-                    "vkGetSwapchainImagesKHR");
+            swapchainObject_ =
+                std::make_shared<SwapchainHandle>(deviceOwner_, createInfo);
+            swapchain_ = swapchainObject_->handle();
+            images_ = swapchainObject_->images();
             imageFormat_ = surfaceFormat.format;
             createImageViews();
         } catch (...) {
@@ -211,37 +215,21 @@ private:
 
     void createImageViews() {
         imageViews_.resize(images_.size(), VK_NULL_HANDLE);
+        imageViewObjects_.resize(images_.size());
         for (size_t i = 0; i < images_.size(); ++i) {
-            VkImageViewCreateInfo createInfo{
-                VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-            createInfo.image = images_[i];
-            createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            createInfo.format = imageFormat_;
-            createInfo.components = {VK_COMPONENT_SWIZZLE_IDENTITY,
-                                     VK_COMPONENT_SWIZZLE_IDENTITY,
-                                     VK_COMPONENT_SWIZZLE_IDENTITY,
-                                     VK_COMPONENT_SWIZZLE_IDENTITY};
-            createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            createInfo.subresourceRange.levelCount = 1;
-            createInfo.subresourceRange.layerCount = 1;
-            checkVk(vkCreateImageView(device_, &createInfo, nullptr,
-                                      &imageViews_[i]),
-                    "vkCreateImageView");
+            imageViewObjects_[i] = std::make_shared<ImageView>(
+                deviceOwner_, images_[i], imageFormat_,
+                VK_IMAGE_ASPECT_COLOR_BIT);
+            imageViews_[i] = imageViewObjects_[i]->handle();
         }
     }
 
     void destroyResources() {
-        for (VkImageView imageView : imageViews_) {
-            if (imageView != VK_NULL_HANDLE) {
-                vkDestroyImageView(device_, imageView, nullptr);
-            }
-        }
+        imageViewObjects_.clear();
         imageViews_.clear();
         images_.clear();
-        if (swapchain_ != VK_NULL_HANDLE) {
-            vkDestroySwapchainKHR(device_, swapchain_, nullptr);
-            swapchain_ = VK_NULL_HANDLE;
-        }
+        swapchainObject_.reset();
+        swapchain_ = VK_NULL_HANDLE;
     }
 
     void reset() {
