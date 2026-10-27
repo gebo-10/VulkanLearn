@@ -1,6 +1,6 @@
 #pragma once
 
-#include <kvk/window.h>
+#include "window.h"
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -13,7 +13,7 @@
 
 namespace LearnVulkan {
 
-class GlfwWindow final : public klib::vk::Window {
+class GlfwWindow final : public Window {
 public:
     GlfwWindow(uint32_t width, uint32_t height, const char* title) {
         if (glfwInit() != GLFW_TRUE) {
@@ -43,7 +43,7 @@ public:
     GlfwWindow(const GlfwWindow&) = delete;
     GlfwWindow& operator=(const GlfwWindow&) = delete;
 
-    std::vector<const char*> requiredVulkanInstanceExtensions() const override {
+    std::vector<const char*> requiredVulkanInstanceExtensions() const {
         uint32_t count = 0;
         const char** extensions = glfwGetRequiredInstanceExtensions(&count);
         if (extensions == nullptr || count == 0) {
@@ -54,11 +54,11 @@ public:
     }
 
     VkResult createVulkanSurface(VkInstance instance,
-                                 VkSurfaceKHR* surface) const override {
+                                 VkSurfaceKHR* surface) const {
         return glfwCreateWindowSurface(instance, window_, nullptr, surface);
     }
 
-    VkExtent2D framebufferExtent() const override {
+    FramebufferExtent framebufferExtent() const override {
         int width = 0;
         int height = 0;
         glfwGetFramebufferSize(window_, &width, &height);

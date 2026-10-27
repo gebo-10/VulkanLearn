@@ -1,5 +1,6 @@
 #pragma once
 
+#include "glfw_window.h"
 #include "renderer_config.h"
 #include "sync_objects.h"
 #include <kvk/command_resources.h>
@@ -13,8 +14,8 @@
 #include <kvk/descriptor_set.h>
 #include <kvk/descriptor_set_layout.h>
 #include <kvk/swapchain.h>
+#include <kvk/surface.h>
 
-#include <kvk/window.h>
 #include <kvk/transient_command_pool.h>
 
 
@@ -41,11 +42,16 @@ using namespace klib::vk;
 
 class Renderer {
 public:
-    Renderer(Window& window, GLFWwindow* nativeWindow) : window_(window) {
-        instance_ = std::make_shared<Instance>(window_);
-        device_ = std::make_shared<Device>(instance_);
+    Renderer(GlfwWindow& window) : window_(window) {
+        instance_ = std::make_shared<Instance>(
+            window_.requiredVulkanInstanceExtensions());
+        VkSurfaceKHR surface = VK_NULL_HANDLE;
+        checkVk(window_.createVulkanSurface(instance_->handle(), &surface),
+                "glfwCreateWindowSurface");
+        surface_ = std::make_shared<Surface>(instance_, surface);
+        device_ = std::make_shared<Device>(instance_, surface_);
         swapchain_ = std::make_shared<Swapchain>(
-            device_, instance_->surface(), window_);
+            device_, surface_->handle(), toVkExtent(window_.framebufferExtent()));
         transients_ = std::make_shared<TransientCommandPool>(
             device_, device_->graphicsQueueFamily());
 
@@ -60,7 +66,7 @@ public:
             device_, swapchain_->imageCount());
         syncObjects_ = std::make_shared<SyncObjects>(device_, kFramesInFlight);
         try {
-            createImGui(nativeWindow);
+            createImGui(window_.nativeHandle());
         } catch (...) {
             shutdownImGui();
             throw;
@@ -80,6 +86,10 @@ public:
     Renderer& operator=(const Renderer&) = delete;
 
 private:
+    static VkExtent2D toVkExtent(FramebufferExtent extent) {
+        return {extent.width, extent.height};
+    }
+
     void createImGui(GLFWwindow* window) {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
@@ -206,8 +216,9 @@ private:
         BufferPtr buffer;
     };
 
-    Window& window_;
+    GlfwWindow& window_;
     InstancePtr instance_;
+    SurfacePtr surface_;
     DevicePtr device_;
     SwapchainPtr swapchain_;
     DescriptorSetLayoutPtr textureDescriptorSetLayout_;
@@ -517,14 +528,14 @@ private:
     }
 
     void recreateSwapchain() {
-        VkExtent2D extent = window_.framebufferExtent();
+        VkExtent2D extent = toVkExtent(window_.framebufferExtent());
         while (extent.width == 0 || extent.height == 0) {
             window_.waitEvents();
-            extent = window_.framebufferExtent();
+            extent = toVkExtent(window_.framebufferExtent());
         }
 
         device_->waitIdle();
-        swapchain_->recreate(device_);
+        swapchain_->recreate(device_, extent);
         pipeline_->recreate(swapchain_->imageFormat());
         commandResources_->recreate(swapchain_->imageCount());
     }

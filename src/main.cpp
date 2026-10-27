@@ -16,7 +16,7 @@ int main() {
         LearnVulkan::GlfwWindow window(
             LearnVulkan::kWindowWidth, LearnVulkan::kWindowHeight,
             "Vulkan 1.4 - Triangle");
-        LearnVulkan::Renderer renderer(window, window.nativeHandle());
+        LearnVulkan::Renderer renderer(window);
 
         bool showDemoWindow = true;
         std::array<float, 3> triangleColor{1.0f, 1.0f, 1.0f};

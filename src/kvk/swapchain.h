@@ -2,7 +2,6 @@
 
 #include <kvk/device.h>
 #include <kvk/image_view.h>
-#include <kvk/window.h>
 
 #include <algorithm>
 #include <limits>
@@ -19,17 +18,20 @@ struct SwapchainSupport {
 
 class Swapchain {
 public:
-    Swapchain(DevicePtr device, VkSurfaceKHR surface, Window& window)
-        : device_(device ? device->handle() : VK_NULL_HANDLE),
-          physicalDevice_(device ? device->physicalDevice() : VK_NULL_HANDLE),
-          surface_(surface),
-          window_(&window),
-          deviceGraphicsQueueFamily_(device ? device->graphicsQueueFamily() : 0),
-          devicePresentQueueFamily_(device ? device->presentQueueFamily() : 0) {
+    Swapchain(DevicePtr device, VkSurfaceKHR surface,
+              VkExtent2D framebufferExtent)
+        : surface_(surface) {
         if (!device) {
             throw std::invalid_argument("Swapchain requires a valid Device");
         }
-        create(device);
+        if (surface_ == VK_NULL_HANDLE) {
+            throw std::invalid_argument("Swapchain requires a valid surface");
+        }
+        device_ = device->handle();
+        physicalDevice_ = device->physicalDevice();
+        deviceGraphicsQueueFamily_ = device->graphicsQueueFamily();
+        devicePresentQueueFamily_ = device->presentQueueFamily();
+        create(device, framebufferExtent);
     }
 
     ~Swapchain() { reset(); }
@@ -37,13 +39,13 @@ public:
     Swapchain(const Swapchain&) = delete;
     Swapchain& operator=(const Swapchain&) = delete;
 
-    void recreate(DevicePtr device) {
+    void recreate(DevicePtr device, VkExtent2D framebufferExtent) {
         if (!device || device->handle() != device_) {
             throw std::invalid_argument(
                 "Swapchain recreation requires its original Device");
         }
         destroyResources();
-        create(device);
+        create(device, framebufferExtent);
     }
 
     VkSwapchainKHR handle() const { return swapchain_; }
@@ -62,7 +64,6 @@ private:
     VkDevice device_ = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
     VkSurfaceKHR surface_ = VK_NULL_HANDLE;
-    Window* window_ = nullptr;
     VkSwapchainKHR swapchain_ = VK_NULL_HANDLE;
     std::vector<VkImage> images_;
     std::vector<VkImageView> imageViews_;
@@ -128,13 +129,14 @@ private:
         return VK_PRESENT_MODE_FIFO_KHR;
     }
 
-    VkExtent2D chooseExtent(const VkSurfaceCapabilitiesKHR& capabilities) const {
+    VkExtent2D chooseExtent(const VkSurfaceCapabilitiesKHR& capabilities,
+                            VkExtent2D framebufferExtent) const {
         if (capabilities.currentExtent.width !=
             std::numeric_limits<uint32_t>::max()) {
             return capabilities.currentExtent;
         }
 
-        VkExtent2D selected = window_->framebufferExtent();
+        VkExtent2D selected = framebufferExtent;
         selected.width = std::clamp(selected.width,
                                     capabilities.minImageExtent.width,
                                     capabilities.maxImageExtent.width);
@@ -159,12 +161,12 @@ private:
         throw std::runtime_error("Surface has no supported composite alpha mode");
     }
 
-    void create(const DevicePtr& device) {
+    void create(const DevicePtr& device, VkExtent2D framebufferExtent) {
         const SwapchainSupport support = querySupport();
         const VkSurfaceFormatKHR surfaceFormat = chooseSurfaceFormat(support.formats);
         const VkPresentModeKHR presentMode =
             choosePresentMode(support.presentModes);
-        extent_ = chooseExtent(support.capabilities);
+        extent_ = chooseExtent(support.capabilities, framebufferExtent);
         if (extent_.width == 0 || extent_.height == 0) {
             throw std::runtime_error("Cannot create a zero-sized swapchain");
         }

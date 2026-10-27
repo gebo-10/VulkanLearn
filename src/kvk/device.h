@@ -1,6 +1,7 @@
 #pragma once
 
 #include <kvk/instance.h>
+#include <kvk/surface.h>
 
 #include <spdlog/spdlog.h>
 
@@ -17,17 +18,20 @@ struct QueueFamilyIndices {
     std::optional<uint32_t> graphics;
     std::optional<uint32_t> present;
 
-    bool complete() const { return graphics.has_value() && present.has_value(); }
+    bool complete(bool requirePresent = true) const {
+        return graphics.has_value() && (!requirePresent || present.has_value());
+    }
 };
 
 class Device {
 public:
-    explicit Device(InstancePtr instance) : instanceOwner_(std::move(instance)) {
+    explicit Device(InstancePtr instance, SurfacePtr surface)
+        : instanceOwner_(std::move(instance)), surface_(std::move(surface)) {
         if (!instanceOwner_) {
             throw std::invalid_argument("Device requires a valid Instance");
         }
         instance_ = instanceOwner_->handle();
-        surface_ = instanceOwner_->surface();
+        const bool requiresPresentation = surface_ != nullptr;
 
         uint32_t count = 0;
         checkVk(vkEnumeratePhysicalDevices(instance_, &count, nullptr),
@@ -58,8 +62,9 @@ public:
             features.pNext = &vulkan13Features;
             vkGetPhysicalDeviceFeatures2(candidate, &features);
 
-            if (families.complete() && supportsSwapchain(candidate) &&
-                supportsSurface(candidate) &&
+            if (families.complete(requiresPresentation) &&
+                (!requiresPresentation ||
+                 (supportsSwapchain(candidate) && supportsSurface(candidate))) &&
                 vulkan13Features.dynamicRendering == VK_TRUE) {
                 physicalDevice_ = candidate;
                 queueFamilies_ = families;
@@ -69,9 +74,11 @@ public:
             }
         }
 
-        throw std::runtime_error(
-            "No GPU supports Vulkan 1.4, dynamic rendering, and swapchain "
-            "presentation");
+        throw std::runtime_error(requiresPresentation
+                                     ? "No GPU supports Vulkan 1.4, dynamic "
+                                       "rendering, and swapchain presentation"
+                                     : "No GPU supports Vulkan 1.4 and dynamic "
+                                       "rendering");
     }
 
     ~Device() { reset(); }
@@ -84,7 +91,13 @@ public:
     VkQueue graphicsQueue() const { return graphicsQueue_; }
     VkQueue presentQueue() const { return presentQueue_; }
     uint32_t graphicsQueueFamily() const { return *queueFamilies_.graphics; }
-    uint32_t presentQueueFamily() const { return *queueFamilies_.present; }
+    uint32_t presentQueueFamily() const {
+        if (!queueFamilies_.present) {
+            throw std::logic_error(
+                "Device was created without a presentation queue");
+        }
+        return *queueFamilies_.present;
+    }
     const QueueFamilyIndices& queueFamilies() const { return queueFamilies_; }
 
     void waitIdle() const { checkVk(vkDeviceWaitIdle(device_), "vkDeviceWaitIdle"); }
@@ -106,7 +119,7 @@ public:
 private:
     InstancePtr instanceOwner_;
     VkInstance instance_ = VK_NULL_HANDLE;
-    VkSurfaceKHR surface_ = VK_NULL_HANDLE;
+    SurfacePtr surface_ = nullptr;
     VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
     VkDevice device_ = VK_NULL_HANDLE;
     VkQueue graphicsQueue_ = VK_NULL_HANDLE;
@@ -124,14 +137,16 @@ private:
             if ((properties[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0) {
                 families.graphics = i;
             }
-            VkBool32 supportsPresent = VK_FALSE;
-            checkVk(vkGetPhysicalDeviceSurfaceSupportKHR(
-                        device, i, surface_, &supportsPresent),
-                    "vkGetPhysicalDeviceSurfaceSupportKHR");
-            if (supportsPresent == VK_TRUE) {
-                families.present = i;
+            if (surface_ != nullptr) {
+                VkBool32 supportsPresent = VK_FALSE;
+                checkVk(vkGetPhysicalDeviceSurfaceSupportKHR(
+                            device, i, surface_->handle(), &supportsPresent),
+                        "vkGetPhysicalDeviceSurfaceSupportKHR");
+                if (supportsPresent == VK_TRUE) {
+                    families.present = i;
+                }
             }
-            if (families.complete()) {
+            if (families.complete(surface_ != nullptr)) {
                 break;
             }
         }
@@ -157,18 +172,20 @@ private:
     bool supportsSurface(VkPhysicalDevice device) const {
         uint32_t formatCount = 0;
         checkVk(vkGetPhysicalDeviceSurfaceFormatsKHR(
-                    device, surface_, &formatCount, nullptr),
+                    device, surface_->handle(), &formatCount, nullptr),
                 "vkGetPhysicalDeviceSurfaceFormatsKHR");
         uint32_t presentModeCount = 0;
         checkVk(vkGetPhysicalDeviceSurfacePresentModesKHR(
-                    device, surface_, &presentModeCount, nullptr),
+                    device, surface_->handle(), &presentModeCount, nullptr),
                 "vkGetPhysicalDeviceSurfacePresentModesKHR");
         return formatCount > 0 && presentModeCount > 0;
     }
 
     void createLogicalDevice() {
-        const std::set<uint32_t> uniqueFamilies = {
-            *queueFamilies_.graphics, *queueFamilies_.present};
+        std::set<uint32_t> uniqueFamilies = {*queueFamilies_.graphics};
+        if (queueFamilies_.present) {
+            uniqueFamilies.insert(*queueFamilies_.present);
+        }
         const float priority = 1.0f;
         std::vector<VkDeviceQueueCreateInfo> queueInfos;
         for (uint32_t family : uniqueFamilies) {
@@ -188,19 +205,24 @@ private:
         vulkan13Features.dynamicRendering = VK_TRUE;
         vulkan13Features.pNext = &vulkan14Features;
 
-        const char* extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+        const char* swapchainExtension = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
         VkDeviceCreateInfo createInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
         createInfo.pNext = &vulkan13Features;
         createInfo.queueCreateInfoCount =
             static_cast<uint32_t>(queueInfos.size());
         createInfo.pQueueCreateInfos = queueInfos.data();
         createInfo.pEnabledFeatures = &baseFeatures;
-        createInfo.enabledExtensionCount = 1;
-        createInfo.ppEnabledExtensionNames = extensions;
+        createInfo.enabledExtensionCount =
+            surface_ != nullptr ? 1u : 0u;
+        createInfo.ppEnabledExtensionNames =
+            surface_ != nullptr ? &swapchainExtension : nullptr;
         checkVk(vkCreateDevice(physicalDevice_, &createInfo, nullptr, &device_),
                 "vkCreateDevice");
         vkGetDeviceQueue(device_, *queueFamilies_.graphics, 0, &graphicsQueue_);
-        vkGetDeviceQueue(device_, *queueFamilies_.present, 0, &presentQueue_);
+        if (queueFamilies_.present) {
+            vkGetDeviceQueue(device_, *queueFamilies_.present, 0,
+                             &presentQueue_);
+        }
     }
 
     void reset() {
