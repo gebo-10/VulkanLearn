@@ -1,12 +1,11 @@
 #pragma once
 
 #include "glfw_window.h"
-#include "renderer_config.h"
 #include "sync_objects.h"
 #include "graphics_pipeline.h"
 
-#include "command_resources.h"
 #include <kvk/buffer.h>
+#include <kvk/command_pool.h>
 #include <kvk/device_memory.h>
 #include <kvk/image.h>
 #include <kvk/image_view.h>
@@ -33,13 +32,14 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 
 struct GLFWwindow;
 
 namespace LearnVulkan {
 
 using namespace klib::vk;
-
+constexpr uint32_t kFramesInFlight = 2;
 class Renderer {
 public:
     Renderer(GlfwWindow& window) : window_(window) {
@@ -62,8 +62,7 @@ public:
         pipeline_ = std::make_shared<GraphicsPipeline>(
             device_, swapchain_->imageFormat(),
             PipelineConfig::triangle(textureDescriptorSetLayout_->handle()));
-        commandResources_ = std::make_shared<CommandResources>(
-            device_, swapchain_->imageCount());
+        createCommandBuffers(swapchain_->imageCount());
         syncObjects_ = std::make_shared<SyncObjects>(device_, kFramesInFlight);
         try {
             createImGui(window_.nativeHandle());
@@ -165,7 +164,7 @@ public:
         }
 
         checkVk(vkResetFences(device_->handle(), 1, &frameFence), "vkResetFences");
-        VkCommandBuffer commandBuffer = commandResources_->handle(imageIndex);
+        VkCommandBuffer commandBuffer = commandBuffers_.at(imageIndex);
         checkVk(vkResetCommandBuffer(commandBuffer, 0), "vkResetCommandBuffer");
         recordCommandBuffer(commandBuffer, imageIndex, drawData);
 
@@ -223,7 +222,8 @@ private:
     SwapchainPtr swapchain_;
     DescriptorSetLayoutPtr textureDescriptorSetLayout_;
     GraphicsPipelinePtr pipeline_;
-    CommandResourcesPtr commandResources_;
+    CommandPoolPtr commandPool_;
+    std::vector<VkCommandBuffer> commandBuffers_;
     SyncObjectsPtr syncObjects_;
     DeviceMemoryPtr vertexBufferMemory_;
     BufferPtr vertexBuffer_;
@@ -537,7 +537,15 @@ private:
         device_->waitIdle();
         swapchain_->recreate(device_, extent);
         pipeline_->recreate(swapchain_->imageFormat());
-        commandResources_->recreate(swapchain_->imageCount());
+        createCommandBuffers(swapchain_->imageCount());
+    }
+
+    void createCommandBuffers(uint32_t count) {
+        commandBuffers_.clear();
+        commandPool_.reset();
+        commandPool_ = std::make_shared<CommandPool>(
+            device_, device_->graphicsQueueFamily());
+        commandBuffers_ = commandPool_->allocate(count);
     }
 
     void shutdownImGui() {

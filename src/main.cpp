@@ -9,12 +9,15 @@
 #include <array>
 #include <exception>
 
+constexpr uint32_t kWindowWidth = 800;
+constexpr uint32_t kWindowHeight = 600;
+
 int main() {
     spdlog::info("Starting Vulkan 1.4 triangle demo");
     int exitCode = 0;
     try {
         LearnVulkan::GlfwWindow window(
-            LearnVulkan::kWindowWidth, LearnVulkan::kWindowHeight,
+            kWindowWidth, kWindowHeight,
             "Vulkan 1.4 - Triangle");
         LearnVulkan::Renderer renderer(window);
 
