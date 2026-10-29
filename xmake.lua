@@ -1,7 +1,7 @@
 set_project("VulkanLearnProject")
 set_version("0.0.1")
 
-add_rules("plugin.compile_commands.autoupdate", {outputdir = ".vscode"}) --
+add_rules("plugin.compile_commands.autoupdate", {outputdir = ".vscode"}) 
 
 add_rules("mode.debug")
 --add_rules("mode.release")
@@ -20,7 +20,7 @@ add_requires("spdlog", { alias = "spdlog"})
 add_requires("glm", { alias = "glm"})
 add_requires("glfw",{alias = "glfw",configs = { build = "missing"} })
 add_requires("stb", {alias = "stb", configs = {build = "missing"}})
-
+--add_requires("SPIRV-Reflect")
 
 --includes("external/klib/core/xmake.lua")
 includes("src/imgui/xmake.lua")

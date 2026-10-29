@@ -21,27 +21,27 @@ struct DrawCmd {
     virtual ~DrawCmd() = default;
 };
 
-struct RectCmd : DrawCmd {
+struct DrawRectCmd : DrawCmd {
     Rect rect;
     Color color;
-    RectCmd() : DrawCmd(CmdType::Rect) {}
+    DrawRectCmd() : DrawCmd(CmdType::Rect) {}
 };
 
 // 关键：ImageCmd 持有 {handle, version}，不持有 Image 指针
-struct ImageCmd : DrawCmd {
+struct DrawImageCmd : DrawCmd {
     Handle   image;
     uint32_t version = 0;
     Rect     dst;              // 目标矩形（屏幕空间）
     Rect     srcUV;            // 逻辑 UV（渲染层会叠加图集重映射）
-    ImageCmd() : DrawCmd(CmdType::Image) {}
+    DrawImageCmd() : DrawCmd(CmdType::Image) {}
 };
 
-struct MeshCmd : DrawCmd {
+struct DrawMeshCmd : DrawCmd {
     Handle   mesh;
     uint32_t version = 0;
     uint32_t indexCount = 0;
     Rect     transform;        // 简化：仅示意
-    MeshCmd() : DrawCmd(CmdType::Mesh) {}
+    DrawMeshCmd() : DrawCmd(CmdType::Mesh) {}
 };
 
 using DrawCmdList = std::vector<std::unique_ptr<DrawCmd>>;
