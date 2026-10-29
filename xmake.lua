@@ -49,7 +49,7 @@ target("VulkanLearn")
     add_linkdirs(vulkan_sdk .. "/Lib")
 
     -- 链接 Vulkan 导入库
-    add_links("vulkan-1")
+    add_links("vulkan-1","slang", "slang-compiler")
 
     add_runenvs("PATH", vulkan_sdk .. "/Bin")
 
