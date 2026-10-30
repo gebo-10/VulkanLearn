@@ -1,52 +1,64 @@
-#include "renderer.h"
-#include "glfw_window.h"
+#include <krender/resource_manager.h>
+#include <krender/shader.h>
+#include <krender/slang_compiler.h>
 
-#include <imgui.h>
-#include <backends/imgui_impl_glfw.h>
-#include <backends/imgui_impl_vulkan.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
-#include <array>
-#include <exception>
+#include <krender/shader_utils.h>
 
-constexpr uint32_t kWindowWidth = 800;
-constexpr uint32_t kWindowHeight = 600;
+#include <exception>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <stdexcept>
+#include <string>
+
+namespace {
+
+using namespace klib::krender;
+
+}  // namespace
 
 int main() {
-    spdlog::info("Starting Vulkan 1.4 triangle demo");
-    int exitCode = 0;
+    using namespace klib::krender;
+
+    //spdlog::set_default_logger(spdlog::stdout_color_mt("shader"));
+    spdlog::set_pattern("%^[%l]%$ %v");
     try {
-        LearnVulkan::GlfwWindow window(
-            kWindowWidth, kWindowHeight,
-            "Vulkan 1.4 - Triangle");
-        LearnVulkan::Renderer renderer(window);
-
-        bool showDemoWindow = true;
-        std::array<float, 3> triangleColor{1.0f, 1.0f, 1.0f};
-        while (!window.shouldClose()) {
-            window.pollEvents();
-            ImGui_ImplVulkan_NewFrame();
-            ImGui_ImplGlfw_NewFrame();
-            ImGui::NewFrame();
-            ImGuiID dockspace_id = ImGui::DockSpaceOverViewport(
-                0, 
-                ImGui::GetMainViewport(), 
-                ImGuiDockNodeFlags_PassthruCentralNode  // 核心标志：让中央节点透传
-            );
-            ImGui::Begin("Triangle");
-            if (ImGui::ColorEdit3("Vertex color tint", triangleColor.data())) {
-                renderer.setTriangleColor(triangleColor[0], triangleColor[1],
-                                          triangleColor[2]);
-            }
-            ImGui::End();
-            ImGui::ShowDemoWindow(&showDemoWindow);
-            ImGui::Render();
-            renderer.drawFrame(ImGui::GetDrawData());
+        const std::filesystem::path shaderPath =
+            "assets/shaders/triangle.slang";
+        std::ifstream shaderFile(shaderPath, std::ios::binary);
+        if (!shaderFile) {
+            throw std::runtime_error("Failed to open Slang source: " +
+                                     shaderPath.string());
         }
-    } catch (const std::exception& error) {
-        spdlog::error("Vulkan demo failed: {}", error.what());
-        exitCode = 1;
-    }
+        const std::string source(
+            (std::istreambuf_iterator<char>(shaderFile)),
+            std::istreambuf_iterator<char>());
 
-    return exitCode;
+        const SlangCompileResult compileResult = SlangCompiler::compile(
+            source, {"vertexMain", "fragmentMain"}, "spirv_1_5");
+        if (!compileResult.success) {
+            throw std::runtime_error("Slang compilation failed: " +
+                                     compileResult.diagnostics);
+        }
+
+        ResourceManager resourceManager;
+        const auto shader = resourceManager.createAs<Shader>(
+            ResourceKind::Shader, ZeroRefPolicy::Immediate, "triangle",
+            compileResult);
+
+        std::string interfaceError;
+        if (!shader->validate(&interfaceError)) {
+            throw std::runtime_error("Invalid shader resource: " +
+                                     interfaceError);
+        }
+
+        shader_utils::logShaderInfo(*shader);
+        return 0;
+    } catch (const std::exception& error) {
+        spdlog::error("Shader resource setup failed: {}", error.what());
+        return 1;
+    }
 }

@@ -13,6 +13,8 @@
 
 namespace klib::krender {
 
+struct SlangCompileResult;
+
 enum class ShaderStage : uint32_t {
     None        = 0,
     Vertex      = 1u << 0,
@@ -53,6 +55,7 @@ enum class BindingType : uint8_t {
     StorageTexelBuffer,
     InputAttachment,
     AccelerationStructure,
+    Unknown,
 };
 
 enum class ShaderImageDimension : uint8_t {
@@ -100,6 +103,7 @@ struct ShaderValueType {
 
 struct PushConstantMember {
     std::string name;
+    std::string qualifiedName;
     uint32_t offset = 0;
     uint32_t size = 0;
     ShaderValueType type;
@@ -134,7 +138,7 @@ struct ShaderInterface {
         const std::string& name) const noexcept {
         for (const PushConstantRange& range : pushConstantRanges) {
             for (const PushConstantMember& member : range.members) {
-                if (member.name == name) {
+                if (member.name == name || member.qualifiedName == name) {
                     return &member;
                 }
             }
@@ -183,6 +187,9 @@ struct ShaderInterface {
             }
             if (binding.stages == ShaderStage::None) {
                 return fail("Shader descriptor has no stage visibility");
+            }
+            if (binding.type == BindingType::Unknown) {
+                return fail("Shader descriptor has an unsupported binding type");
             }
         }
 
@@ -259,7 +266,9 @@ struct ShaderInterface {
             for (size_t j = 0; j < lhs.members.size(); ++j) {
                 const PushConstantMember& left = lhs.members[j];
                 const PushConstantMember& right = rhs.members[j];
-                if (left.name != right.name || left.offset != right.offset ||
+                if (left.name != right.name ||
+                    left.qualifiedName != right.qualifiedName ||
+                    left.offset != right.offset ||
                     left.size != right.size ||
                     left.type.scalar != right.type.scalar ||
                     left.type.rows != right.type.rows ||
@@ -308,6 +317,7 @@ struct ShaderInterface {
             mix(range.members.size());
             for (const PushConstantMember& member : range.members) {
                 mixString(member.name);
+                mixString(member.qualifiedName);
                 mix(member.offset);
                 mix(member.size);
                 mix(static_cast<uint8_t>(member.type.scalar));
@@ -323,6 +333,14 @@ struct ShaderInterface {
     }
 };
 
+// Backend-neutral exchange type shared by shader compilers and ShaderModule.
+struct ShaderModuleCreateInfo {
+    ShaderStage stage = ShaderStage::None;
+    std::string entryPoint = "main";
+    std::vector<uint8_t> spirv;
+    ShaderInterface interface;
+};
+
 class ShaderModule {
 public:
     ShaderModule(ShaderStage stage, std::vector<uint8_t> spirv,
@@ -332,6 +350,11 @@ public:
           spirv_(std::move(spirv)),
           entryPoint_(std::move(entryPoint)),
           interface_(std::move(shaderInterface)) {}
+
+    explicit ShaderModule(ShaderModuleCreateInfo createInfo)
+        : ShaderModule(createInfo.stage, std::move(createInfo.spirv),
+                       std::move(createInfo.entryPoint),
+                       std::move(createInfo.interface)) {}
 
     ShaderStage stage() const noexcept { return stage_; }
     const std::vector<uint8_t>& spirv() const noexcept { return spirv_; }
@@ -385,6 +408,9 @@ public:
           name_(std::move(name)),
           stages_(std::move(stages)),
           interface_(std::move(mergedInterface)) {}
+
+    Shader(Handle handle, std::string name,
+           const SlangCompileResult& compileResult);
 
     const std::string& name() const noexcept { return name_; }
     const std::vector<ShaderModule>& stages() const noexcept {
