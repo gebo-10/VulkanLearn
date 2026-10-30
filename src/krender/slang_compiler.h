@@ -532,14 +532,32 @@ private:
                 member.type.columns = static_cast<uint8_t>(
                     std::min(type->getColumnCount(), 255u));
                 if (type->getKind() == slang::TypeReflection::Kind::Matrix) {
-                    member.matrixStride = static_cast<uint32_t>(
-                        std::min(valueLayout->getStride(
-                                     slang::ParameterCategory::Uniform),
-                                 static_cast<size_t>(
-                                     std::numeric_limits<uint32_t>::max())));
                     member.rowMajor =
                         valueLayout->getMatrixLayoutMode() ==
                         SLANG_MATRIX_LAYOUT_ROW_MAJOR;
+                    const uint32_t majorCount =
+                        member.rowMajor ? member.type.rows
+                                        : member.type.columns;
+                    const uint32_t minorCount =
+                        member.rowMajor ? member.type.columns
+                                        : member.type.rows;
+                    const uint32_t scalarSize =
+                        member.type.scalar == ShaderScalarType::Float64
+                            ? sizeof(double)
+                            : sizeof(float);
+                    const size_t matrixSize =
+                        valueLayout->getSize(
+                            slang::ParameterCategory::Uniform);
+                    const size_t packedStride =
+                        static_cast<size_t>(minorCount) * scalarSize;
+                    const size_t reflectedStride =
+                        majorCount != 0 && matrixSize % majorCount == 0
+                            ? matrixSize / majorCount
+                            : packedStride;
+                    member.matrixStride = static_cast<uint32_t>(
+                        std::min(std::max(reflectedStride, packedStride),
+                                 static_cast<size_t>(
+                                     std::numeric_limits<uint32_t>::max())));
                 }
             }
             members.push_back(std::move(member));

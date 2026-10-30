@@ -6,14 +6,14 @@
 #include <krender/shader.h>
 #include <krender/shader_utils.h>
 #include <krender/slang_compiler.h>
-#include <krender/texture.h>
 
 #include <glfw_window.h>
 
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
-#include <array>
+#include <glm/gtc/matrix_transform.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -28,9 +28,9 @@
 namespace {
 
 struct Vertex {
-    float position[2];
+    float position[3];
+    float normal[3];
     float color[3];
-    float uv[2];
 };
 
 }  // namespace
@@ -44,7 +44,7 @@ int main() {
     spdlog::set_pattern("%^[%l]%$ %v");
 
     try {
-        LearnVulkan::GlfwWindow window(1280, 720, "VulkanLearn");
+        LearnVulkan::GlfwWindow window(1280, 720, "VulkanLearn - Lit Cube");
         bool framebufferResized = false;
         auto framebufferExtent = window.framebufferExtent();
         while ((framebufferExtent.width == 0 || framebufferExtent.height == 0) &&
@@ -68,7 +68,7 @@ int main() {
         ResourceManager resourceManager;
 
         const std::filesystem::path shaderPath =
-            std::filesystem::path("assets") / "shaders" / "triangle.slang";
+            std::filesystem::path("assets") / "shaders" / "lit_cube.slang";
         std::ifstream shaderFile(shaderPath, std::ios::binary);
         if (!shaderFile) {
             throw std::runtime_error("Failed to open Slang source: " +
@@ -85,55 +85,75 @@ int main() {
         }
 
         auto shader = resourceManager.createAs<Shader>(
-            ResourceKind::Shader, ZeroRefPolicy::Immediate, "rectangle",
+            ResourceKind::Shader, ZeroRefPolicy::Immediate, "lit_cube",
             compileResult);
         std::string shaderError;
         if (!shader->validate(&shaderError)) {
-            throw std::runtime_error("Invalid rectangle shader: " +
+            throw std::runtime_error("Invalid cube shader: " +
                                      shaderError);
         }
         shader_utils::logShaderInfo(*shader);
 
-        std::vector<uint8_t> whitePixel{255, 255, 255, 255};
-        auto texture = resourceManager.createAs<Texture>(
-            ResourceKind::Texture, ZeroRefPolicy::Immediate, 1, 1,
-            std::move(whitePixel));
-
         auto material =
             resourceManager.createAs<Material>(ResourceKind::Material);
         material->setShader(shader);
-        material->setTexture("triangleTexture", texture);
-        material->setProperty(
-            "triangleParameters.color",
-            std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f});
 
         constexpr Vertex vertices[] = {
-            {{-0.65f, -0.5f}, {1.0f, 0.25f, 0.15f}, {0.0f, 0.0f}},
-            {{0.65f, -0.5f}, {0.2f, 0.85f, 0.35f}, {1.0f, 0.0f}},
-            {{0.65f, 0.5f}, {0.2f, 0.45f, 1.0f}, {1.0f, 1.0f}},
-            {{-0.65f, 0.5f}, {1.0f, 0.8f, 0.2f}, {0.0f, 1.0f}},
-        };
-        constexpr uint16_t indices[] = {0, 1, 2, 0, 2, 3};
+            {{-0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.90f, 0.28f, 0.18f}},
+            {{0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.90f, 0.28f, 0.18f}},
+            {{0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.90f, 0.28f, 0.18f}},
+            {{-0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.90f, 0.28f, 0.18f}},
 
-        MeshData rectangleData;
-        rectangleData.vertices = vertices;
-        rectangleData.vertexBytes = sizeof(vertices);
-        rectangleData.vertexCount = static_cast<uint32_t>(std::size(vertices));
-        rectangleData.layout.stride = sizeof(Vertex);
-        rectangleData.layout.attributes = {
-            {0, VK_FORMAT_R32G32_SFLOAT,
+            {{0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.20f, 0.62f, 0.92f}},
+            {{-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.20f, 0.62f, 0.92f}},
+            {{-0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.20f, 0.62f, 0.92f}},
+            {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.20f, 0.62f, 0.92f}},
+
+            {{0.5f, -0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}, {0.22f, 0.78f, 0.45f}},
+            {{0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.22f, 0.78f, 0.45f}},
+            {{0.5f, 0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.22f, 0.78f, 0.45f}},
+            {{0.5f, 0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}, {0.22f, 0.78f, 0.45f}},
+
+            {{-0.5f, -0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {0.95f, 0.72f, 0.20f}},
+            {{-0.5f, -0.5f, 0.5f}, {-1.0f, 0.0f, 0.0f}, {0.95f, 0.72f, 0.20f}},
+            {{-0.5f, 0.5f, 0.5f}, {-1.0f, 0.0f, 0.0f}, {0.95f, 0.72f, 0.20f}},
+            {{-0.5f, 0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {0.95f, 0.72f, 0.20f}},
+
+            {{-0.5f, 0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {0.64f, 0.34f, 0.88f}},
+            {{0.5f, 0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {0.64f, 0.34f, 0.88f}},
+            {{0.5f, 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.64f, 0.34f, 0.88f}},
+            {{-0.5f, 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.64f, 0.34f, 0.88f}},
+
+            {{-0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {0.20f, 0.78f, 0.82f}},
+            {{0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {0.20f, 0.78f, 0.82f}},
+            {{0.5f, -0.5f, 0.5f}, {0.0f, -1.0f, 0.0f}, {0.20f, 0.78f, 0.82f}},
+            {{-0.5f, -0.5f, 0.5f}, {0.0f, -1.0f, 0.0f}, {0.20f, 0.78f, 0.82f}},
+        };
+        constexpr uint16_t indices[] = {
+            0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7,
+            8, 9, 10, 8, 10, 11, 12, 13, 14, 12, 14, 15,
+            16, 17, 18, 16, 18, 19, 20, 21, 22, 20, 22, 23,
+        };
+
+        MeshData cubeData;
+        cubeData.vertices = vertices;
+        cubeData.vertexBytes = sizeof(vertices);
+        cubeData.vertexCount = static_cast<uint32_t>(std::size(vertices));
+        cubeData.layout.stride = sizeof(Vertex);
+        cubeData.layout.attributes = {
+            {0, VK_FORMAT_R32G32B32_SFLOAT,
              static_cast<uint32_t>(offsetof(Vertex, position))},
             {1, VK_FORMAT_R32G32B32_SFLOAT,
+             static_cast<uint32_t>(offsetof(Vertex, normal))},
+            {2, VK_FORMAT_R32G32B32_SFLOAT,
              static_cast<uint32_t>(offsetof(Vertex, color))},
-            {2, VK_FORMAT_R32G32_SFLOAT,
-             static_cast<uint32_t>(offsetof(Vertex, uv))},
         };
-        rectangleData.indices = indices;
-        rectangleData.indexBytes = sizeof(indices);
-        rectangleData.indexCount = static_cast<uint32_t>(std::size(indices));
-        rectangleData.indexType = VK_INDEX_TYPE_UINT16;
-        auto rectangle = resourceManager.createAs<Mesh>(
-            ResourceKind::Mesh, ZeroRefPolicy::Immediate, rectangleData);
+        cubeData.indices = indices;
+        cubeData.indexBytes = sizeof(indices);
+        cubeData.indexCount = static_cast<uint32_t>(std::size(indices));
+        cubeData.indexType = VK_INDEX_TYPE_UINT16;
+        auto cube = resourceManager.createAs<Mesh>(
+            ResourceKind::Mesh, ZeroRefPolicy::Immediate, cubeData);
 
         auto vulkanRenderer =
             std::make_shared<VulkanRenderImpl>(context, resourceManager);
@@ -167,6 +187,23 @@ int main() {
                 }
             }
 
+            const VkExtent2D renderExtent = context.extent();
+            glm::mat4 projection = glm::perspectiveRH_ZO(
+                glm::radians(45.0f),
+                static_cast<float>(renderExtent.width) /
+                    static_cast<float>(renderExtent.height),
+                0.1f, 10.0f);
+            projection[1][1] *= -1.0f;
+            const glm::mat4 view =
+                glm::lookAtRH(glm::vec3(2.4f, 1.8f, 2.8f),
+                              glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            const float time = static_cast<float>(glfwGetTime());
+            const glm::mat4 model =
+                glm::rotate(glm::mat4(1.0f), time * 0.8f,
+                            glm::vec3(0.0f, 1.0f, 0.0f)) *
+                glm::rotate(glm::mat4(1.0f), time * 0.5f,
+                            glm::vec3(1.0f, 0.0f, 0.0f));
+
             render->beginFrame();
             if (vulkanRenderer->swapchainRecreationRequired()) {
                 continue;
@@ -174,15 +211,15 @@ int main() {
             render->clear(ClearFlag::Color | ClearFlag::Depth,
                           ClearValue{glm::vec4(0.055f, 0.07f, 0.11f, 1.0f),
                                      1.0f, 0});
-            render->renderMesh(rectangle->handle(), material->handle(),
-                               glm::mat4(1.0f), 1);
+            render->setViewProjection(view, projection);
+            render->renderMesh(cube->handle(), material->handle(), model, 1);
             render->endFrame();
         }
 
         window.setResizeCallback({});
         return 0;
     } catch (const std::exception& error) {
-        spdlog::error("Vulkan rectangle demo failed: {}", error.what());
+        spdlog::error("Lit cube demo failed: {}", error.what());
         return 1;
     }
 }
