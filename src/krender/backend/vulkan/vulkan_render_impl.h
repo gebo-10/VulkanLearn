@@ -3,6 +3,7 @@
 #include <krender/IRender.h>
 #include <krender/material.h>
 #include <krender/mesh.h>
+#include <krender/render_buffer.h>
 #include <krender/resource_manager.h>
 #include <krender/shader.h>
 #include <krender/texture.h>
@@ -22,6 +23,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -189,10 +191,11 @@ public:
             presentResult == VK_SUBOPTIMAL_KHR ||
             presentResult == VK_ERROR_OUT_OF_DATE_KHR;
         if (!retiredMeshes_.empty() || !retiredTextures_.empty() ||
-            !retiredDescriptors_.empty()) {
+            !retiredRenderBuffers_.empty() || !retiredDescriptors_.empty()) {
             context_.deviceOwner()->waitIdle();
             retiredDescriptors_.clear();
             retiredTextures_.clear();
+            retiredRenderBuffers_.clear();
             retiredMeshes_.clear();
         }
         if (presentResult != VK_SUCCESS &&
@@ -273,6 +276,10 @@ public:
         view_ = view;
         projection_ = projection;
         viewProjection_ = projection * view;
+        frameData_[0] = view_;
+        frameData_[1] = projection_;
+        frameData_[2] = viewProjection_;
+        frameDataDirty_ = true;
     }
 
     void renderMesh(const Handle& meshHandle, const Handle& materialHandle,
@@ -327,6 +334,7 @@ public:
             }
         }
 
+        syncFrameDataBuffer();
         const GpuMesh& gpuMesh = resolveMesh(*mesh);
         const auto pipeline = resolvePipeline(*material->shader(), data.layout);
         const auto descriptorSets =
@@ -396,6 +404,11 @@ private:
         vk::SamplerPtr sampler;
     };
 
+    struct GpuRenderBuffer {
+        uint32_t version = UINT32_MAX;
+        BufferAllocation allocation;
+    };
+
     struct DepthTarget {
         vk::DeviceMemoryPtr memory;
         vk::ImagePtr image;
@@ -421,14 +434,19 @@ private:
     vk::SamplerPtr defaultSampler_;
     std::unordered_map<Handle, GpuMesh, HandleHash> meshes_;
     std::unordered_map<Handle, GpuTexture, HandleHash> textures_;
+    std::unordered_map<Handle, GpuRenderBuffer, HandleHash> renderBuffers_;
     std::unordered_map<std::string, std::shared_ptr<PipelineState>> pipelines_;
     std::unordered_map<Handle, DescriptorState, HandleHash> descriptors_;
     std::vector<GpuMesh> retiredMeshes_;
     std::vector<GpuTexture> retiredTextures_;
+    std::vector<GpuRenderBuffer> retiredRenderBuffers_;
     std::vector<DescriptorState> retiredDescriptors_;
     std::vector<DepthTarget> depthTargets_;
     std::vector<bool> depthImageInitialized_;
     std::vector<bool> swapchainImageInitialized_;
+    std::array<glm::mat4, 3> frameData_{
+        glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f)};
+    BufferAllocation frameDataBuffer_;
     VkExtent2D depthExtent_{};
     VkFormat depthFormat_ = VK_FORMAT_UNDEFINED;
     VkCommandBuffer commandBuffer_ = VK_NULL_HANDLE;
@@ -439,7 +457,10 @@ private:
     glm::mat4 projection_{1.0f};
     glm::mat4 viewProjection_{1.0f};
     bool frameActive_ = false;
+    bool frameDataDirty_ = true;
     bool swapchainRecreationRequired_ = false;
+
+    static constexpr const char* FrameDataBindingName = "frameData";
 
     void requireActiveFrame() const {
         if (!frameActive_) {
@@ -500,6 +521,39 @@ private:
         return cached;
     }
 
+    void syncFrameDataBuffer() {
+        if (!frameDataDirty_) {
+            return;
+        }
+        const VkDeviceSize size = sizeof(frameData_);
+        if (!frameDataBuffer_.buffer) {
+            frameDataBuffer_ = createBuffer(
+                size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, frameData_.data());
+        } else {
+            context_.uploadToBuffer(frameDataBuffer_.buffer->handle(), 0, size,
+                                    frameData_.data());
+        }
+        frameDataDirty_ = false;
+    }
+
+    GpuRenderBuffer& resolveRenderBuffer(const RenderBuffer& renderBuffer) {
+        GpuRenderBuffer& cached = renderBuffers_[renderBuffer.handle()];
+        if (cached.allocation.buffer &&
+            cached.version == renderBuffer.version()) {
+            return cached;
+        }
+
+        GpuRenderBuffer replacement;
+        replacement.version = renderBuffer.version();
+        replacement.allocation = createBuffer(
+            renderBuffer.size(), renderBuffer.usage(), renderBuffer.data());
+        if (cached.allocation.buffer) {
+            retiredRenderBuffers_.push_back(cached);
+        }
+        cached = std::move(replacement);
+        return cached;
+    }
+
     static VkShaderStageFlags toVkStages(ShaderStage stages) {
         VkShaderStageFlags result = 0;
         if (hasShaderStage(stages, ShaderStage::Vertex)) {
@@ -522,6 +576,10 @@ private:
 
     static VkDescriptorType toVkDescriptorType(BindingType type) {
         switch (type) {
+            case BindingType::UniformBuffer:
+                return VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            case BindingType::StorageBuffer:
+                return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             case BindingType::SampledImage:
                 return VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
             case BindingType::Sampler:
@@ -815,6 +873,15 @@ private:
             hash = (hash ^ texture->handle().generation) * 1099511628211ull;
             hash = (hash ^ texture->version()) * 1099511628211ull;
         }
+        for (const auto& [name, renderBuffer] : material.renderBuffers()) {
+            for (unsigned char ch : name) {
+                hash = (hash ^ ch) * 1099511628211ull;
+            }
+            hash = (hash ^ renderBuffer->handle().index) * 1099511628211ull;
+            hash =
+                (hash ^ renderBuffer->handle().generation) * 1099511628211ull;
+            hash = (hash ^ renderBuffer->version()) * 1099511628211ull;
+        }
         return hash;
     }
 
@@ -858,13 +925,57 @@ private:
         cached.sets = cached.pool->allocate(layouts);
 
         std::vector<VkDescriptorImageInfo> imageInfos;
+        std::vector<VkDescriptorBufferInfo> bufferInfos;
         std::vector<VkWriteDescriptorSet> writes;
         imageInfos.reserve(shader.interface().bindings.size());
+        bufferInfos.reserve(shader.interface().bindings.size());
         writes.reserve(shader.interface().bindings.size());
         for (const ShaderBinding& binding : shader.interface().bindings) {
-            VkDescriptorImageInfo imageInfo{};
-            if (binding.type == BindingType::SampledImage ||
-                binding.type == BindingType::CombinedImageSampler) {
+            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            write.dstSet = cached.sets.at(binding.set);
+            write.dstBinding = binding.binding;
+            write.descriptorCount = binding.count;
+            write.descriptorType = toVkDescriptorType(binding.type);
+            if (binding.type == BindingType::UniformBuffer ||
+                binding.type == BindingType::StorageBuffer) {
+                if (binding.type == BindingType::UniformBuffer &&
+                    binding.name == FrameDataBindingName) {
+                    if (!frameDataBuffer_.buffer) {
+                        throw std::logic_error(
+                            "Frame data buffer has not been initialized");
+                    }
+                    bufferInfos.push_back(
+                        {frameDataBuffer_.buffer->handle(), 0,
+                         sizeof(frameData_)});
+                    write.pBufferInfo = &bufferInfos.back();
+                    writes.push_back(write);
+                    continue;
+                }
+                const auto* renderBuffer =
+                    material.renderBuffer(binding.name);
+                if (renderBuffer == nullptr || !*renderBuffer) {
+                    throw std::invalid_argument(
+                        "Material is missing render buffer binding: " +
+                        binding.name);
+                }
+                const VkBufferUsageFlags requiredUsage =
+                    binding.type == BindingType::UniformBuffer
+                        ? VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
+                        : VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+                if (((*renderBuffer)->usage() & requiredUsage) == 0) {
+                    throw std::invalid_argument(
+                        "Render buffer usage does not match shader binding: " +
+                        binding.name);
+                }
+                const GpuRenderBuffer& gpuBuffer =
+                    resolveRenderBuffer(**renderBuffer);
+                bufferInfos.push_back(
+                    {gpuBuffer.allocation.buffer->handle(), 0,
+                     (*renderBuffer)->size()});
+                write.pBufferInfo = &bufferInfos.back();
+            } else if (binding.type == BindingType::SampledImage ||
+                       binding.type == BindingType::CombinedImageSampler) {
+                VkDescriptorImageInfo imageInfo{};
                 const auto* texture = material.texture(binding.name);
                 if (texture == nullptr || !*texture) {
                     throw std::invalid_argument(
@@ -876,19 +987,17 @@ private:
                 if (binding.type == BindingType::CombinedImageSampler) {
                     imageInfo.sampler = gpuTexture.sampler->handle();
                 }
+                imageInfos.push_back(imageInfo);
+                write.pImageInfo = &imageInfos.back();
             } else if (binding.type == BindingType::Sampler) {
+                VkDescriptorImageInfo imageInfo{};
                 imageInfo.sampler = defaultSampler_->handle();
+                imageInfos.push_back(imageInfo);
+                write.pImageInfo = &imageInfos.back();
             } else {
                 throw std::invalid_argument(
-                    "Only image and sampler descriptors can be supplied by Material");
+                    "Material does not support this shader descriptor type");
             }
-            imageInfos.push_back(imageInfo);
-            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-            write.dstSet = cached.sets.at(binding.set);
-            write.dstBinding = binding.binding;
-            write.descriptorCount = binding.count;
-            write.descriptorType = toVkDescriptorType(binding.type);
-            write.pImageInfo = &imageInfos.back();
             writes.push_back(write);
         }
         cached.pool->update(static_cast<uint32_t>(writes.size()), writes.data());

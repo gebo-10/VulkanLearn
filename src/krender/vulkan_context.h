@@ -244,6 +244,19 @@ public:
             const VkCommandBuffer commandBuffer = beginOneShot();
             VkBufferCopy copy{0, offset, size};
             vkCmdCopyBuffer(commandBuffer, staging, buffer, 1, &copy);
+            VkBufferMemoryBarrier toShader{
+                VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+            toShader.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            toShader.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+            toShader.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toShader.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toShader.buffer = buffer;
+            toShader.offset = offset;
+            toShader.size = size;
+            vkCmdPipelineBarrier(
+                commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 1,
+                &toShader, 0, nullptr);
             endOneShot(commandBuffer);
         } catch (...) {
             vkDestroyBuffer(device, staging, nullptr);

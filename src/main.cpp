@@ -2,6 +2,7 @@
 #include <krender/backend/vulkan/vulkan_render_impl.h>
 #include <krender/material.h>
 #include <krender/mesh.h>
+#include <krender/render_buffer.h>
 #include <krender/resource_manager.h>
 #include <krender/shader.h>
 #include <krender/shader_utils.h>
@@ -14,6 +15,7 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -97,6 +99,17 @@ int main() {
         auto material =
             resourceManager.createAs<Material>(ResourceKind::Material);
         material->setShader(shader);
+        constexpr std::array<std::array<float, 4>, 4> instanceColors{{
+            {{1.0f, 0.3f, 0.25f, 1.0f}},
+            {{0.25f, 0.8f, 0.4f, 1.0f}},
+            {{0.3f, 0.55f, 1.0f, 1.0f}},
+            {{1.0f, 0.75f, 0.25f, 1.0f}},
+        }};
+        auto colorBuffer = resourceManager.createAs<RenderBuffer>(
+            ResourceKind::RenderBuffer, ZeroRefPolicy::Immediate,
+            instanceColors.data(), sizeof(instanceColors),
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        material->setRenderBuffer("instanceColors", colorBuffer);
 
         constexpr Vertex vertices[] = {
             {{-0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.90f, 0.28f, 0.18f}},
@@ -212,7 +225,7 @@ int main() {
                           ClearValue{glm::vec4(0.055f, 0.07f, 0.11f, 1.0f),
                                      1.0f, 0});
             render->setViewProjection(view, projection);
-            render->renderMesh(cube->handle(), material->handle(), model, 1);
+            render->renderMesh(cube->handle(), material->handle(), model, 4);
             render->endFrame();
         }
 

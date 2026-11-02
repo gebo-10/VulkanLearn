@@ -1,6 +1,7 @@
 #pragma once
 
 #include "resource_manager.h"
+#include "render_buffer.h"
 #include "shader.h"
 #include "texture.h"
 
@@ -92,6 +93,40 @@ public:
         return textures_;
     }
 
+    void setRenderBuffer(std::string name,
+                         std::shared_ptr<RenderBuffer> renderBuffer) {
+        if (name.empty()) {
+            throw std::invalid_argument(
+                "Render buffer binding name must not be empty");
+        }
+        if (!renderBuffer) {
+            throw std::invalid_argument(
+                "Material requires a valid render buffer");
+        }
+        renderBuffers_.insert_or_assign(std::move(name),
+                                        std::move(renderBuffer));
+        bumpVersion();
+    }
+
+    bool removeRenderBuffer(const std::string& name) {
+        if (renderBuffers_.erase(name) == 0) {
+            return false;
+        }
+        bumpVersion();
+        return true;
+    }
+
+    const std::shared_ptr<RenderBuffer>* renderBuffer(
+        const std::string& name) const noexcept {
+        const auto it = renderBuffers_.find(name);
+        return it == renderBuffers_.end() ? nullptr : &it->second;
+    }
+
+    const std::unordered_map<std::string, std::shared_ptr<RenderBuffer>>&
+    renderBuffers() const noexcept {
+        return renderBuffers_;
+    }
+
     template <typename T>
     void setProperty(std::string name, T&& value) {
         using ValueType = std::decay_t<T>;
@@ -174,6 +209,10 @@ public:
             (void)texture;
             bytes += name.size() + sizeof(std::shared_ptr<Texture>);
         }
+        for (const auto& [name, renderBuffer] : renderBuffers_) {
+            (void)renderBuffer;
+            bytes += name.size() + sizeof(std::shared_ptr<RenderBuffer>);
+        }
         bytes += sizeof(std::shared_ptr<Shader>);
         return bytes;
     }
@@ -181,6 +220,7 @@ public:
 private:
     std::shared_ptr<Shader> shader_;
     std::unordered_map<std::string, std::shared_ptr<Texture>> textures_;
+    std::unordered_map<std::string, std::shared_ptr<RenderBuffer>> renderBuffers_;
     std::unordered_map<std::string, Property> properties_;
 };
 
