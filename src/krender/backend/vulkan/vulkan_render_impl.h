@@ -267,7 +267,9 @@ public:
         vkCmdSetScissor(commandBuffer_, 0, 1, &scissor_);
     }
 
-    void setCommonUniformBuffer(const Handle& renderBufferHandle) override {
+    void setCommonUniformBuffer(const Handle& renderBufferHandle,
+                                uint32_t set,
+                                uint32_t binding) override {
         const auto renderBuffer =
             resources_.get<RenderBuffer>(renderBufferHandle);
         if (!renderBuffer) {
@@ -279,6 +281,8 @@ public:
                 "Common render buffer must have uniform-buffer usage");
         }
         commonUniformBuffer_ = renderBuffer;
+        commonUniformBufferSet_ = set;
+        commonUniformBufferBinding_ = binding;
     }
 
     void renderMesh(const Handle& meshHandle, const Handle& materialHandle,
@@ -443,6 +447,8 @@ private:
     std::vector<bool> depthImageInitialized_;
     std::vector<bool> swapchainImageInitialized_;
     std::shared_ptr<RenderBuffer> commonUniformBuffer_;
+    uint32_t commonUniformBufferSet_ = 0;
+    uint32_t commonUniformBufferBinding_ = 0;
     VkExtent2D depthExtent_{};
     VkFormat depthFormat_ = VK_FORMAT_UNDEFINED;
     VkCommandBuffer commandBuffer_ = VK_NULL_HANDLE;
@@ -451,8 +457,6 @@ private:
     VkRect2D scissor_{};
     bool frameActive_ = false;
     bool swapchainRecreationRequired_ = false;
-
-    static constexpr const char* CommonUniformBufferBindingName = "frameData";
 
     void requireActiveFrame() const {
         if (!frameActive_) {
@@ -876,6 +880,9 @@ private:
                 1099511628211ull;
             hash = (hash ^ commonUniformBuffer_->size()) *
                    1099511628211ull;
+            hash = (hash ^ commonUniformBufferSet_) * 1099511628211ull;
+            hash = (hash ^ commonUniformBufferBinding_) *
+                   1099511628211ull;
         }
         return hash;
     }
@@ -922,6 +929,21 @@ private:
         std::vector<VkDescriptorImageInfo> imageInfos;
         std::vector<VkDescriptorBufferInfo> bufferInfos;
         std::vector<VkWriteDescriptorSet> writes;
+        if (commonUniformBuffer_) {
+            const auto commonBinding = std::find_if(
+                shader.interface().bindings.begin(),
+                shader.interface().bindings.end(),
+                [this](const ShaderBinding& binding) {
+                    return binding.set == commonUniformBufferSet_ &&
+                           binding.binding == commonUniformBufferBinding_;
+                });
+            if (commonBinding == shader.interface().bindings.end() ||
+                commonBinding->type != BindingType::UniformBuffer) {
+                throw std::invalid_argument(
+                    "Shader has no uniform-buffer binding at the configured "
+                    "common buffer set and binding");
+            }
+        }
         imageInfos.reserve(shader.interface().bindings.size());
         bufferInfos.reserve(shader.interface().bindings.size());
         writes.reserve(shader.interface().bindings.size());
@@ -933,12 +955,9 @@ private:
             write.descriptorType = toVkDescriptorType(binding.type);
             if (binding.type == BindingType::UniformBuffer ||
                 binding.type == BindingType::StorageBuffer) {
-                if (binding.type == BindingType::UniformBuffer &&
-                    binding.name == CommonUniformBufferBindingName) {
-                    if (!commonUniformBuffer_) {
-                        throw std::logic_error(
-                            "Common uniform buffer has not been set");
-                    }
+                if (commonUniformBuffer_ &&
+                    binding.set == commonUniformBufferSet_ &&
+                    binding.binding == commonUniformBufferBinding_) {
                     const GpuRenderBuffer& gpuBuffer =
                         resolveRenderBuffer(*commonUniformBuffer_);
                     bufferInfos.push_back(

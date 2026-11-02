@@ -216,7 +216,7 @@ int main() {
             ResourceKind::RenderBuffer, ZeroRefPolicy::Immediate,
             frameData.data(), sizeof(frameData),
             VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
-        render->setCommonUniformBuffer(commonUniformBuffer->handle());
+        render->setCommonUniformBuffer(commonUniformBuffer->handle(), 0, 0);
         window.setResizeCallback([&framebufferResized] {
             framebufferResized = true;
         });

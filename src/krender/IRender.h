@@ -50,8 +50,10 @@ public:
 
     virtual void setViewport(const glm::vec4& viewport) = 0;
     virtual void setScissor(const glm::ivec4& scissor) = 0;
-    // Supplies the shared UBO used by the shader's "frameData" binding.
-    virtual void setCommonUniformBuffer(const Handle& renderBuffer) = 0;
+    // Supplies a shared UBO for the specified descriptor set and binding.
+    virtual void setCommonUniformBuffer(const Handle& renderBuffer,
+                                        uint32_t set,
+                                        uint32_t binding) = 0;
     virtual void renderMesh(const Handle& mesh, const Handle& material, int instanceCount) = 0;
 };
 }
