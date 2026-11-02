@@ -20,10 +20,7 @@
 #include <kvk/sampler.h>
 #include <kvk/shader_module.h>
 
-#include <glm/gtc/type_ptr.hpp>
-
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -270,15 +267,18 @@ public:
         vkCmdSetScissor(commandBuffer_, 0, 1, &scissor_);
     }
 
-    void setViewProjection(const glm::mat4& view,
-                           const glm::mat4& projection) override {
-        view_ = view;
-        projection_ = projection;
-        viewProjection_ = projection * view;
-        frameData_[0] = view_;
-        frameData_[1] = projection_;
-        frameData_[2] = viewProjection_;
-        frameDataDirty_ = true;
+    void setCommonUniformBuffer(const Handle& renderBufferHandle) override {
+        const auto renderBuffer =
+            resources_.get<RenderBuffer>(renderBufferHandle);
+        if (!renderBuffer) {
+            throw std::invalid_argument(
+                "Common uniform buffer handle is invalid");
+        }
+        if ((renderBuffer->usage() & VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT) == 0) {
+            throw std::invalid_argument(
+                "Common render buffer must have uniform-buffer usage");
+        }
+        commonUniformBuffer_ = renderBuffer;
     }
 
     void renderMesh(const Handle& meshHandle, const Handle& materialHandle,
@@ -332,7 +332,6 @@ public:
             }
         }
 
-        syncFrameDataBuffer();
         const GpuMesh& gpuMesh = resolveMesh(*mesh);
         const auto pipeline = resolvePipeline(*material->shader(), data.layout);
         const auto descriptorSets =
@@ -385,6 +384,7 @@ private:
     struct BufferAllocation {
         vk::DeviceMemoryPtr memory;
         vk::BufferPtr buffer;
+        VkDeviceSize size = 0;
     };
 
     struct GpuMesh {
@@ -442,23 +442,17 @@ private:
     std::vector<DepthTarget> depthTargets_;
     std::vector<bool> depthImageInitialized_;
     std::vector<bool> swapchainImageInitialized_;
-    std::array<glm::mat4, 3> frameData_{
-        glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f)};
-    BufferAllocation frameDataBuffer_;
+    std::shared_ptr<RenderBuffer> commonUniformBuffer_;
     VkExtent2D depthExtent_{};
     VkFormat depthFormat_ = VK_FORMAT_UNDEFINED;
     VkCommandBuffer commandBuffer_ = VK_NULL_HANDLE;
     uint32_t imageIndex_ = 0;
     VkViewport viewport_{};
     VkRect2D scissor_{};
-    glm::mat4 view_{1.0f};
-    glm::mat4 projection_{1.0f};
-    glm::mat4 viewProjection_{1.0f};
     bool frameActive_ = false;
-    bool frameDataDirty_ = true;
     bool swapchainRecreationRequired_ = false;
 
-    static constexpr const char* FrameDataBindingName = "frameData";
+    static constexpr const char* CommonUniformBufferBindingName = "frameData";
 
     void requireActiveFrame() const {
         if (!frameActive_) {
@@ -474,6 +468,7 @@ private:
                 "GPU buffer creation requires non-empty source data");
         }
         BufferAllocation allocation;
+        allocation.size = size;
         allocation.buffer =
             std::make_shared<vk::Buffer>(
                 context_.deviceOwner(), size,
@@ -519,25 +514,17 @@ private:
         return cached;
     }
 
-    void syncFrameDataBuffer() {
-        if (!frameDataDirty_) {
-            return;
-        }
-        const VkDeviceSize size = sizeof(frameData_);
-        if (!frameDataBuffer_.buffer) {
-            frameDataBuffer_ = createBuffer(
-                size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, frameData_.data());
-        } else {
-            context_.uploadToBuffer(frameDataBuffer_.buffer->handle(), 0, size,
-                                    frameData_.data());
-        }
-        frameDataDirty_ = false;
-    }
-
     GpuRenderBuffer& resolveRenderBuffer(const RenderBuffer& renderBuffer) {
         GpuRenderBuffer& cached = renderBuffers_[renderBuffer.handle()];
         if (cached.allocation.buffer &&
             cached.version == renderBuffer.version()) {
+            return cached;
+        }
+        if (cached.allocation.buffer &&
+            cached.allocation.size == renderBuffer.size()) {
+            context_.uploadToBuffer(cached.allocation.buffer->handle(), 0,
+                                    renderBuffer.size(), renderBuffer.data());
+            cached.version = renderBuffer.version();
             return cached;
         }
 
@@ -880,6 +867,16 @@ private:
                 (hash ^ renderBuffer->handle().generation) * 1099511628211ull;
             hash = (hash ^ renderBuffer->version()) * 1099511628211ull;
         }
+        if (commonUniformBuffer_) {
+            hash =
+                (hash ^ commonUniformBuffer_->handle().index) *
+                1099511628211ull;
+            hash =
+                (hash ^ commonUniformBuffer_->handle().generation) *
+                1099511628211ull;
+            hash = (hash ^ commonUniformBuffer_->size()) *
+                   1099511628211ull;
+        }
         return hash;
     }
 
@@ -937,14 +934,16 @@ private:
             if (binding.type == BindingType::UniformBuffer ||
                 binding.type == BindingType::StorageBuffer) {
                 if (binding.type == BindingType::UniformBuffer &&
-                    binding.name == FrameDataBindingName) {
-                    if (!frameDataBuffer_.buffer) {
+                    binding.name == CommonUniformBufferBindingName) {
+                    if (!commonUniformBuffer_) {
                         throw std::logic_error(
-                            "Frame data buffer has not been initialized");
+                            "Common uniform buffer has not been set");
                     }
+                    const GpuRenderBuffer& gpuBuffer =
+                        resolveRenderBuffer(*commonUniformBuffer_);
                     bufferInfos.push_back(
-                        {frameDataBuffer_.buffer->handle(), 0,
-                         sizeof(frameData_)});
+                        {gpuBuffer.allocation.buffer->handle(), 0,
+                         commonUniformBuffer_->size()});
                     write.pBufferInfo = &bufferInfos.back();
                     writes.push_back(write);
                     continue;

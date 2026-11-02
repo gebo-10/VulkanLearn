@@ -210,6 +210,13 @@ int main() {
         auto vulkanRenderer =
             std::make_shared<VulkanRenderImpl>(context, resourceManager);
         std::shared_ptr<IRender> render = vulkanRenderer;
+        std::array<glm::mat4, 3> frameData{
+            glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f)};
+        auto commonUniformBuffer = resourceManager.createAs<RenderBuffer>(
+            ResourceKind::RenderBuffer, ZeroRefPolicy::Immediate,
+            frameData.data(), sizeof(frameData),
+            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+        render->setCommonUniformBuffer(commonUniformBuffer->handle());
         window.setResizeCallback([&framebufferResized] {
             framebufferResized = true;
         });
@@ -249,16 +256,16 @@ int main() {
             const glm::mat4 view =
                 glm::lookAtRH(glm::vec3(2.4f, 1.8f, 2.8f),
                               glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            frameData[0] = view;
+            frameData[1] = projection;
+            frameData[2] = projection * view;
+            commonUniformBuffer->update(frameData.data(), sizeof(frameData));
             const float time = static_cast<float>(glfwGetTime());
             const glm::mat4 model =
                 glm::rotate(glm::mat4(1.0f), time * 0.8f,
                             glm::vec3(0.0f, 1.0f, 0.0f)) *
                 glm::rotate(glm::mat4(1.0f), time * 0.5f,
                             glm::vec3(1.0f, 0.0f, 0.0f));
-            std::array<float, 16> modelProperty{};
-            std::copy(glm::value_ptr(model), glm::value_ptr(model) + 16,
-                      modelProperty.begin());
-
             render->beginFrame();
             if (vulkanRenderer->swapchainRecreationRequired()) {
                 continue;
@@ -266,8 +273,8 @@ int main() {
             render->clear(ClearFlag::Color | ClearFlag::Depth,
                           ClearValue{glm::vec4(0.055f, 0.07f, 0.11f, 1.0f),
                                      1.0f, 0});
-            render->setViewProjection(view, projection);
-            material->setProperty("model", modelProperty);
+            material->setProperty("model", glm::value_ptr(model),
+                                  sizeof(model));
             render->renderMesh(cube->handle(), material->handle(), 4);
             render->endFrame();
         }

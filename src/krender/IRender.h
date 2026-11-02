@@ -7,6 +7,7 @@
 
 #include <krender/handle.h>
 #include <glm/glm.hpp>
+
 namespace klib::krender{
 
 enum class ClearFlag : uint32_t {
@@ -49,7 +50,8 @@ public:
 
     virtual void setViewport(const glm::vec4& viewport) = 0;
     virtual void setScissor(const glm::ivec4& scissor) = 0;
-    virtual void setViewProjection(const glm::mat4& view, const glm::mat4& projection) = 0;
+    // Supplies the shared UBO used by the shader's "frameData" binding.
+    virtual void setCommonUniformBuffer(const Handle& renderBuffer) = 0;
     virtual void renderMesh(const Handle& mesh, const Handle& material, int instanceCount) = 0;
 };
 }
