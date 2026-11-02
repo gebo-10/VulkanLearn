@@ -177,7 +177,13 @@ public:
         nameOpt.value.kind = slang::CompilerOptionValueKind::Int;
         nameOpt.value.intValue0 = 1;
 
-        slang::CompilerOptionEntry options[] = { emitOpt, nameOpt };
+
+        slang::CompilerOptionEntry matrixOpt = {};
+        matrixOpt.name = slang::CompilerOptionName::MatrixLayoutColumn;
+        matrixOpt.value.kind = slang::CompilerOptionValueKind::Int;
+        matrixOpt.value.intValue0 = 1;
+
+        slang::CompilerOptionEntry options[] = { emitOpt, nameOpt, matrixOpt };
 
         std::vector<const char*> pathViews;
         for (const auto& p : includePaths) pathViews.push_back(p.c_str());
@@ -186,7 +192,8 @@ public:
         sessionDesc.targets = &targetDesc;
         sessionDesc.targetCount = 1;
         sessionDesc.compilerOptionEntries = options;
-        sessionDesc.compilerOptionEntryCount = 2;
+        sessionDesc.compilerOptionEntryCount = 3;
+
         if (!pathViews.empty()) {
             sessionDesc.searchPaths = pathViews.data();
             sessionDesc.searchPathCount = static_cast<SlangInt>(pathViews.size());
