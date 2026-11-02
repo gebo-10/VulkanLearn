@@ -10,6 +10,7 @@
 
 #include <glfw_window.h>
 
+#include <stb_image.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
@@ -22,6 +23,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -33,6 +35,7 @@ struct Vertex {
     float position[3];
     float normal[3];
     float color[3];
+    float uv[2];
 };
 
 }  // namespace
@@ -99,6 +102,38 @@ int main() {
         auto material =
             resourceManager.createAs<Material>(ResourceKind::Material);
         material->setShader(shader);
+        const std::filesystem::path texturePath =
+            std::filesystem::path("assets") / "images" / "coffic.png";
+        int textureWidth = 0;
+        int textureHeight = 0;
+        int textureChannels = 0;
+        std::unique_ptr<stbi_uc, decltype(&stbi_image_free)> imageData(
+            stbi_load(texturePath.string().c_str(), &textureWidth,
+                      &textureHeight, &textureChannels, STBI_rgb_alpha),
+            &stbi_image_free);
+        if (!imageData) {
+            throw std::runtime_error(
+                "Failed to load texture " + texturePath.string() + ": " +
+                stbi_failure_reason());
+        }
+        if (textureWidth <= 0 || textureHeight <= 0 ||
+            static_cast<uint64_t>(textureWidth) *
+                    static_cast<uint64_t>(textureHeight) >
+                std::numeric_limits<size_t>::max() / 4) {
+            throw std::runtime_error(
+                "Texture has invalid dimensions: " + texturePath.string());
+        }
+        const size_t textureBytes =
+            static_cast<size_t>(textureWidth) *
+            static_cast<size_t>(textureHeight) * 4;
+        std::vector<uint8_t> texturePixels(
+            imageData.get(), imageData.get() + textureBytes);
+        auto cubeTexture = resourceManager.createAs<Texture>(
+            ResourceKind::Texture, ZeroRefPolicy::Immediate,
+            static_cast<uint32_t>(textureWidth),
+            static_cast<uint32_t>(textureHeight), std::move(texturePixels));
+        material->setTexture("cubeTexture", cubeTexture);
+
         constexpr std::array<std::array<float, 4>, 4> instanceColors{{
             {{1.0f, 0.3f, 0.25f, 1.0f}},
             {{0.25f, 0.8f, 0.4f, 1.0f}},
@@ -112,35 +147,35 @@ int main() {
         material->setRenderBuffer("instanceColors", colorBuffer);
 
         constexpr Vertex vertices[] = {
-            {{-0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.90f, 0.28f, 0.18f}},
-            {{0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.90f, 0.28f, 0.18f}},
-            {{0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.90f, 0.28f, 0.18f}},
-            {{-0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.90f, 0.28f, 0.18f}},
+            {{-0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.90f, 0.28f, 0.18f}, {0.0f, 0.0f}},
+            {{0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.90f, 0.28f, 0.18f}, {1.0f, 0.0f}},
+            {{0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.90f, 0.28f, 0.18f}, {1.0f, 1.0f}},
+            {{-0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.90f, 0.28f, 0.18f}, {0.0f, 1.0f}},
 
-            {{0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.20f, 0.62f, 0.92f}},
-            {{-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.20f, 0.62f, 0.92f}},
-            {{-0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.20f, 0.62f, 0.92f}},
-            {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.20f, 0.62f, 0.92f}},
+            {{0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.20f, 0.62f, 0.92f}, {0.0f, 0.0f}},
+            {{-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.20f, 0.62f, 0.92f}, {1.0f, 0.0f}},
+            {{-0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.20f, 0.62f, 0.92f}, {1.0f, 1.0f}},
+            {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.20f, 0.62f, 0.92f}, {0.0f, 1.0f}},
 
-            {{0.5f, -0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}, {0.22f, 0.78f, 0.45f}},
-            {{0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.22f, 0.78f, 0.45f}},
-            {{0.5f, 0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.22f, 0.78f, 0.45f}},
-            {{0.5f, 0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}, {0.22f, 0.78f, 0.45f}},
+            {{0.5f, -0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}, {0.22f, 0.78f, 0.45f}, {0.0f, 0.0f}},
+            {{0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.22f, 0.78f, 0.45f}, {1.0f, 0.0f}},
+            {{0.5f, 0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.22f, 0.78f, 0.45f}, {1.0f, 1.0f}},
+            {{0.5f, 0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}, {0.22f, 0.78f, 0.45f}, {0.0f, 1.0f}},
 
-            {{-0.5f, -0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {0.95f, 0.72f, 0.20f}},
-            {{-0.5f, -0.5f, 0.5f}, {-1.0f, 0.0f, 0.0f}, {0.95f, 0.72f, 0.20f}},
-            {{-0.5f, 0.5f, 0.5f}, {-1.0f, 0.0f, 0.0f}, {0.95f, 0.72f, 0.20f}},
-            {{-0.5f, 0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {0.95f, 0.72f, 0.20f}},
+            {{-0.5f, -0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {0.95f, 0.72f, 0.20f}, {0.0f, 0.0f}},
+            {{-0.5f, -0.5f, 0.5f}, {-1.0f, 0.0f, 0.0f}, {0.95f, 0.72f, 0.20f}, {1.0f, 0.0f}},
+            {{-0.5f, 0.5f, 0.5f}, {-1.0f, 0.0f, 0.0f}, {0.95f, 0.72f, 0.20f}, {1.0f, 1.0f}},
+            {{-0.5f, 0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {0.95f, 0.72f, 0.20f}, {0.0f, 1.0f}},
 
-            {{-0.5f, 0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {0.64f, 0.34f, 0.88f}},
-            {{0.5f, 0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {0.64f, 0.34f, 0.88f}},
-            {{0.5f, 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.64f, 0.34f, 0.88f}},
-            {{-0.5f, 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.64f, 0.34f, 0.88f}},
+            {{-0.5f, 0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {0.64f, 0.34f, 0.88f}, {0.0f, 0.0f}},
+            {{0.5f, 0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {0.64f, 0.34f, 0.88f}, {1.0f, 0.0f}},
+            {{0.5f, 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.64f, 0.34f, 0.88f}, {1.0f, 1.0f}},
+            {{-0.5f, 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.64f, 0.34f, 0.88f}, {0.0f, 1.0f}},
 
-            {{-0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {0.20f, 0.78f, 0.82f}},
-            {{0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {0.20f, 0.78f, 0.82f}},
-            {{0.5f, -0.5f, 0.5f}, {0.0f, -1.0f, 0.0f}, {0.20f, 0.78f, 0.82f}},
-            {{-0.5f, -0.5f, 0.5f}, {0.0f, -1.0f, 0.0f}, {0.20f, 0.78f, 0.82f}},
+            {{-0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {0.20f, 0.78f, 0.82f}, {0.0f, 0.0f}},
+            {{0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {0.20f, 0.78f, 0.82f}, {1.0f, 0.0f}},
+            {{0.5f, -0.5f, 0.5f}, {0.0f, -1.0f, 0.0f}, {0.20f, 0.78f, 0.82f}, {1.0f, 1.0f}},
+            {{-0.5f, -0.5f, 0.5f}, {0.0f, -1.0f, 0.0f}, {0.20f, 0.78f, 0.82f}, {0.0f, 1.0f}},
         };
         constexpr uint16_t indices[] = {
             0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7,
@@ -160,6 +195,8 @@ int main() {
              static_cast<uint32_t>(offsetof(Vertex, normal))},
             {2, VK_FORMAT_R32G32B32_SFLOAT,
              static_cast<uint32_t>(offsetof(Vertex, color))},
+            {3, VK_FORMAT_R32G32_SFLOAT,
+             static_cast<uint32_t>(offsetof(Vertex, uv))},
         };
         cubeData.indices = indices;
         cubeData.indexBytes = sizeof(indices);

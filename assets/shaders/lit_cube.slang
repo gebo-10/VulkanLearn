@@ -3,6 +3,7 @@ struct VertexInput
     [[vk::location(0)]] float3 position;
     [[vk::location(1)]] float3 normal;
     [[vk::location(2)]] float3 color;
+    [[vk::location(3)]] float2 uv;
     uint instanceID : SV_InstanceID;
 };
 
@@ -11,6 +12,7 @@ struct VertexOutput
     float4 position : SV_Position;
     [[vk::location(0)]] float3 worldNormal;
     [[vk::location(1)]] float3 color;
+    [[vk::location(2)]] float2 uv;
 };
 
 struct FrameData
@@ -27,6 +29,8 @@ struct ModelParameters
 
 [[vk::binding(0, 0)]] ConstantBuffer<FrameData> frameData;
 [[vk::binding(1, 0)]] StructuredBuffer<float4> instanceColors;
+[[vk::binding(2, 0)]] Texture2D<float4> cubeTexture;
+[[vk::binding(3, 0)]] SamplerState cubeSampler;
 [[vk::push_constant]] ConstantBuffer<ModelParameters> modelParameters;
 
 [shader("vertex")]
@@ -43,14 +47,16 @@ VertexOutput vertexMain(VertexInput input)
     output.worldNormal =
         normalize(mul((float3x3)modelParameters.model, input.normal));
     output.color = input.color * instanceColors[input.instanceID].rgb;
+    output.uv = input.uv;
     return output;
 }
 
 [shader("fragment")]
 float4 fragmentMain(VertexOutput input) : SV_Target0
 {
+    float4 textureColor = cubeTexture.Sample(cubeSampler, input.uv);
     float3 lightDirection = normalize(float3(-0.4, 0.8, 0.6));
     float diffuse = max(dot(normalize(input.worldNormal), lightDirection), 0.0);
     float lighting = 0.22 + diffuse * 0.78;
-    return float4(input.color * lighting, 1.0);
+    return float4(textureColor.rgb * input.color * lighting, textureColor.a);
 }

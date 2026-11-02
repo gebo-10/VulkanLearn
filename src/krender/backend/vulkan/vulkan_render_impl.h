@@ -7,7 +7,7 @@
 #include <krender/resource_manager.h>
 #include <krender/shader.h>
 #include <krender/texture.h>
-#include <krender/vulkan_context.h>
+#include <krender/backend/vulkan/vulkan_context.h>
 
 #include <kvk/buffer.h>
 #include <kvk/descriptor_pool.h>
