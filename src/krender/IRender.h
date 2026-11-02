@@ -50,6 +50,6 @@ public:
     virtual void setViewport(const glm::vec4& viewport) = 0;
     virtual void setScissor(const glm::ivec4& scissor) = 0;
     virtual void setViewProjection(const glm::mat4& view, const glm::mat4& projection) = 0;
-    virtual void renderMesh(const Handle& mesh, const Handle& material, const glm::mat4& modelMatrix, int instanceCount) = 0;
+    virtual void renderMesh(const Handle& mesh, const Handle& material, int instanceCount) = 0;
 };
 }

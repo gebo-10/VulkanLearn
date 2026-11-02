@@ -15,7 +15,9 @@
 #include <spdlog/spdlog.h>
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -253,6 +255,9 @@ int main() {
                             glm::vec3(0.0f, 1.0f, 0.0f)) *
                 glm::rotate(glm::mat4(1.0f), time * 0.5f,
                             glm::vec3(1.0f, 0.0f, 0.0f));
+            std::array<float, 16> modelProperty{};
+            std::copy(glm::value_ptr(model), glm::value_ptr(model) + 16,
+                      modelProperty.begin());
 
             render->beginFrame();
             if (vulkanRenderer->swapchainRecreationRequired()) {
@@ -262,7 +267,8 @@ int main() {
                           ClearValue{glm::vec4(0.055f, 0.07f, 0.11f, 1.0f),
                                      1.0f, 0});
             render->setViewProjection(view, projection);
-            render->renderMesh(cube->handle(), material->handle(), model, 4);
+            material->setProperty("model", modelProperty);
+            render->renderMesh(cube->handle(), material->handle(), 4);
             render->endFrame();
         }
 

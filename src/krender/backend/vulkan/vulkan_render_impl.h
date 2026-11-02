@@ -33,7 +33,6 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
-#include <variant>
 #include <vector>
 
 namespace klib::krender::vulkanimpl {
@@ -283,7 +282,6 @@ public:
     }
 
     void renderMesh(const Handle& meshHandle, const Handle& materialHandle,
-                    const glm::mat4& modelMatrix,
                     int instanceCount) override {
         requireActiveFrame();
         if (instanceCount <= 0) {
@@ -349,7 +347,7 @@ public:
                 static_cast<uint32_t>(descriptorSets.size()),
                 descriptorSets.data(), 0, nullptr);
         }
-        pushConstants(*material, *material->shader(), *pipeline, modelMatrix);
+        pushConstants(*material, *material->shader(), *pipeline);
 
         const VkDeviceSize vertexOffset = 0;
         const VkBuffer vertexBuffer = gpuMesh.vertex.buffer->handle();
@@ -1042,124 +1040,27 @@ private:
     }
 
     void pushConstants(const Material& material, const Shader& shader,
-                       const PipelineState& pipeline,
-                       const glm::mat4& modelMatrix) {
+                       const PipelineState& pipeline) {
+        const std::vector<std::byte>& materialBytes =
+            material.propertyData();
+        const uint32_t requiredSize = shader.interface().pushConstantSize();
+        if (materialBytes.size() < requiredSize) {
+            throw std::invalid_argument(
+                "Material push-constant storage does not match its shader layout");
+        }
+
         for (const PushConstantRange& range :
              shader.interface().pushConstantRanges) {
-            std::vector<std::byte> bytes(range.size, std::byte{0});
-            for (const PushConstantMember& member : range.members) {
-                const uint32_t relativeOffset = member.offset - range.offset;
-                const auto writeValue = [&](const void* source, size_t size) {
-                    writePushConstantMember(bytes, relativeOffset, member,
-                                            source, size);
-                };
-                const std::string& name =
-                    member.name.empty() ? member.qualifiedName : member.name;
-                if (name == "model" || name == "modelMatrix") {
-                    writeValue(glm::value_ptr(modelMatrix), sizeof(glm::mat4));
-                    continue;
-                }
-                if (name == "view") {
-                    writeValue(glm::value_ptr(view_), sizeof(glm::mat4));
-                    continue;
-                }
-                if (name == "projection") {
-                    writeValue(glm::value_ptr(projection_), sizeof(glm::mat4));
-                    continue;
-                }
-                if (name == "viewProjection" || name == "viewProj") {
-                    writeValue(glm::value_ptr(viewProjection_), sizeof(glm::mat4));
-                    continue;
-                }
-                if (name == "mvp") {
-                    const glm::mat4 mvp =
-                        viewProjection_ * modelMatrix;
-                    writeValue(glm::value_ptr(mvp), sizeof(glm::mat4));
-                    continue;
-                }
-                const Property* property = material.property(name);
-                if (property == nullptr && !member.qualifiedName.empty()) {
-                    property = material.property(member.qualifiedName);
-                }
-                if (property == nullptr) {
-                    throw std::invalid_argument(
-                        "Missing material property for push constant: " + name);
-                }
-                std::visit(
-                    [&](const auto& value) {
-                        writeValue(&value, sizeof(value));
-                    },
-                    property->value);
+            if (range.offset > materialBytes.size() ||
+                range.size > materialBytes.size() - range.offset) {
+                throw std::out_of_range(
+                    "Push-constant range exceeds material storage");
             }
             vkCmdPushConstants(
                 commandBuffer_, pipeline.layout->handle(),
                 toVkStages(range.stages), range.offset, range.size,
-                bytes.data());
+                materialBytes.data() + range.offset);
         }
-    }
-
-    static void writePushConstantMember(
-        std::vector<std::byte>& destination, uint32_t offset,
-        const PushConstantMember& member, const void* source,
-        size_t sourceSize) {
-        if (member.arrayCount != 1) {
-            throw std::invalid_argument(
-                "Push-constant arrays are not supported for member: " +
-                member.name);
-        }
-        if (offset > destination.size() ||
-            member.size > destination.size() - offset) {
-            throw std::invalid_argument(
-                "Reflected push-constant member exceeds its range: " +
-                member.name);
-        }
-
-        if (member.type.rows > 1 && member.type.columns > 1) {
-            if (member.type.scalar != ShaderScalarType::Float32 ||
-                sourceSize != static_cast<size_t>(member.type.rows) *
-                                  member.type.columns * sizeof(float)) {
-                throw std::invalid_argument(
-                    "Push-constant matrix property has an incompatible type: " +
-                    member.name);
-            }
-            const auto* values = static_cast<const float*>(source);
-            const uint32_t majorCount =
-                member.rowMajor ? member.type.rows : member.type.columns;
-            const uint32_t minorCount =
-                member.rowMajor ? member.type.columns : member.type.rows;
-            const uint32_t stride =
-                member.matrixStride != 0
-                    ? member.matrixStride
-                    : minorCount * sizeof(float);
-            for (uint32_t major = 0; major < majorCount; ++major) {
-                for (uint32_t minor = 0; minor < minorCount; ++minor) {
-                    const uint32_t row = member.rowMajor ? major : minor;
-                    const uint32_t column =
-                        member.rowMajor ? minor : major;
-                    const size_t sourceIndex =
-                        static_cast<size_t>(column) * member.type.rows + row;
-                    const size_t destinationOffset =
-                        static_cast<size_t>(offset) + major * stride +
-                        minor * sizeof(float);
-                    if (destinationOffset + sizeof(float) >
-                        static_cast<size_t>(offset) + member.size) {
-                        throw std::invalid_argument(
-                            "Push-constant matrix stride exceeds reflected member: " +
-                            member.name);
-                    }
-                    std::memcpy(destination.data() + destinationOffset,
-                                &values[sourceIndex], sizeof(float));
-                }
-            }
-            return;
-        }
-
-        if (sourceSize > member.size) {
-            throw std::invalid_argument(
-                "Push-constant value does not fit reflected member: " +
-                member.name);
-        }
-        std::memcpy(destination.data() + offset, source, sourceSize);
     }
 };
 

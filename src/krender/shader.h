@@ -2,10 +2,12 @@
 
 #include <krender/resource_base.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -119,6 +121,40 @@ struct PushConstantRange {
     uint32_t size = 0;
     // OpenGL backends can represent this range with a uniform buffer.
     std::vector<PushConstantMember> members;
+};
+
+struct PushConstantField {
+    std::string propertyName;
+    std::string qualifiedName;
+    uint32_t offset = 0;
+    uint32_t size = 0;
+    ShaderValueType type;
+    uint32_t arrayCount = 1;
+    uint32_t arrayStride = 0;
+    uint32_t matrixStride = 0;
+    bool rowMajor = false;
+};
+
+struct PushConstantLayout {
+    uint32_t size = 0;
+    std::vector<PushConstantField> fields;
+
+    const PushConstantField* findField(
+        const std::string& name) const noexcept {
+        const PushConstantField* match = nullptr;
+        for (const PushConstantField& field : fields) {
+            if (field.qualifiedName == name) {
+                return &field;
+            }
+            if (field.propertyName == name) {
+                if (match != nullptr) {
+                    return nullptr;
+                }
+                match = &field;
+            }
+        }
+        return match;
+    }
 };
 
 struct ShaderInterface {
@@ -417,6 +453,45 @@ public:
         return stages_;
     }
     const ShaderInterface& interface() const noexcept { return interface_; }
+
+    PushConstantLayout pushConstantLayout() const {
+        std::string error;
+        if (!interface_.validate(&error)) {
+            throw std::invalid_argument(
+                "Cannot build push-constant layout from invalid shader: " +
+                error);
+        }
+        PushConstantLayout layout;
+        layout.size = interface_.pushConstantSize();
+        for (const PushConstantRange& range :
+             interface_.pushConstantRanges) {
+            for (const PushConstantMember& member : range.members) {
+                const auto existing = std::find_if(
+                    layout.fields.begin(), layout.fields.end(),
+                    [&member](const PushConstantField& field) {
+                        return field.qualifiedName == member.qualifiedName &&
+                               field.offset == member.offset &&
+                               field.size == member.size &&
+                               field.type.scalar == member.type.scalar &&
+                               field.type.rows == member.type.rows &&
+                               field.type.columns == member.type.columns &&
+                               field.arrayCount == member.arrayCount &&
+                               field.arrayStride == member.arrayStride &&
+                               field.matrixStride == member.matrixStride &&
+                               field.rowMajor == member.rowMajor;
+                    });
+                if (existing != layout.fields.end()) {
+                    continue;
+                }
+                layout.fields.push_back(
+                    {member.name, member.qualifiedName, member.offset,
+                     member.size, member.type, member.arrayCount,
+                     member.arrayStride, member.matrixStride,
+                     member.rowMajor});
+            }
+        }
+        return layout;
+    }
 
     ShaderModule* moduleFor(ShaderStage stage) noexcept {
         for (ShaderModule& module : stages_) {

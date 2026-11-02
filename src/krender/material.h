@@ -1,10 +1,10 @@
 #pragma once
 
-#include "resource_manager.h"
 #include "render_buffer.h"
 #include "shader.h"
 #include "texture.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -25,32 +25,48 @@ using PropertyValue =
                  std::array<float, 3>, std::array<float, 4>,
                  std::array<float, 9>, std::array<float, 16>>;
 
+// Keeps the typed value alongside its shader-layout byte representation.
 struct Property {
     PropertyValue value;
-
     template <typename T>
-    explicit Property(T&& propertyValue)
-        : value(std::forward<T>(propertyValue)) {}
-};
-
-struct PushConstantField {
-    std::string propertyName;
-    uint32_t offset = 0;
-};
-
-struct PushConstantLayout {
-    uint32_t size = 0;
-    std::vector<PushConstantField> fields;
+    explicit Property(T&& v) : value(std::forward<T>(v)) {}
 };
 
 class Material : public ResourceBase {
 public:
     explicit Material(Handle handle) : ResourceBase(handle) {}
 
+    // ---------- Shader ----------
     void setShader(std::shared_ptr<Shader> shader) {
         if (!shader) {
             throw std::invalid_argument("Material requires a valid shader");
         }
+        PushConstantLayout layout = shader->pushConstantLayout();
+        std::vector<std::byte> propertyData(layout.size, std::byte{0});
+        std::unordered_map<const PushConstantField*, std::string>
+            propertyNamesByField;
+        for (const auto& [name, property] : properties_) {
+            const PushConstantField* field = layout.findField(name);
+            if (field == nullptr) {
+                continue;
+            }
+            const auto inserted = propertyNamesByField.emplace(field, name);
+            if (!inserted.second) {
+                throw std::invalid_argument(
+                    "Multiple material properties refer to shader field: " +
+                    field->propertyName);
+            }
+            if (field->offset > propertyData.size() ||
+                field->size > propertyData.size() - field->offset) {
+                throw std::out_of_range(
+                    "Shader push-constant property exceeds its layout: " +
+                    name);
+            }
+            writePropertyValue(*field, property.value,
+                               propertyData.data() + field->offset);
+        }
+        propertyLayout_ = std::move(layout);
+        propertyData_ = std::move(propertyData);
         shader_ = std::move(shader);
         bumpVersion();
     }
@@ -58,93 +74,112 @@ public:
     void clearShader() {
         shader_.reset();
         bumpVersion();
+        // Keep the last shader layout and property bytes available.
     }
 
     const std::shared_ptr<Shader>& shader() const noexcept { return shader_; }
     bool hasShader() const noexcept { return shader_ != nullptr; }
 
+    // ---------- Texture / RenderBuffer（未改动，略） ----------
     void setTexture(std::string name, std::shared_ptr<Texture> texture) {
-        if (name.empty()) {
-            throw std::invalid_argument("Texture binding name must not be empty");
-        }
-        if (!texture) {
-            throw std::invalid_argument("Material requires a valid texture");
-        }
+        if (name.empty()) throw std::invalid_argument("Texture binding name must not be empty");
+        if (!texture) throw std::invalid_argument("Material requires a valid texture");
         textures_.insert_or_assign(std::move(name), std::move(texture));
         bumpVersion();
     }
-
     bool removeTexture(const std::string& name) {
-        if (textures_.erase(name) == 0) {
-            return false;
-        }
+        if (textures_.erase(name) == 0) return false;
         bumpVersion();
         return true;
     }
-
-    const std::shared_ptr<Texture>* texture(
-        const std::string& name) const noexcept {
+    const std::shared_ptr<Texture>* texture(const std::string& name) const noexcept {
         const auto it = textures_.find(name);
         return it == textures_.end() ? nullptr : &it->second;
     }
-
-    const std::unordered_map<std::string, std::shared_ptr<Texture>>&
-    textures() const noexcept {
+    const std::unordered_map<std::string, std::shared_ptr<Texture>>& textures() const noexcept {
         return textures_;
     }
 
-    void setRenderBuffer(std::string name,
-                         std::shared_ptr<RenderBuffer> renderBuffer) {
-        if (name.empty()) {
-            throw std::invalid_argument(
-                "Render buffer binding name must not be empty");
-        }
-        if (!renderBuffer) {
-            throw std::invalid_argument(
-                "Material requires a valid render buffer");
-        }
-        renderBuffers_.insert_or_assign(std::move(name),
-                                        std::move(renderBuffer));
+    void setRenderBuffer(std::string name, std::shared_ptr<RenderBuffer> rb) {
+        if (name.empty()) throw std::invalid_argument("Render buffer binding name must not be empty");
+        if (!rb) throw std::invalid_argument("Material requires a valid render buffer");
+        renderBuffers_.insert_or_assign(std::move(name), std::move(rb));
         bumpVersion();
     }
-
     bool removeRenderBuffer(const std::string& name) {
-        if (renderBuffers_.erase(name) == 0) {
-            return false;
-        }
+        if (renderBuffers_.erase(name) == 0) return false;
         bumpVersion();
         return true;
     }
-
-    const std::shared_ptr<RenderBuffer>* renderBuffer(
-        const std::string& name) const noexcept {
+    const std::shared_ptr<RenderBuffer>* renderBuffer(const std::string& name) const noexcept {
         const auto it = renderBuffers_.find(name);
         return it == renderBuffers_.end() ? nullptr : &it->second;
     }
-
-    const std::unordered_map<std::string, std::shared_ptr<RenderBuffer>>&
-    renderBuffers() const noexcept {
+    const std::unordered_map<std::string, std::shared_ptr<RenderBuffer>>& renderBuffers() const noexcept {
         return renderBuffers_;
     }
 
+    // ---------- Property ----------
     template <typename T>
     void setProperty(std::string name, T&& value) {
         using ValueType = std::decay_t<T>;
-        static_assert(
-            std::is_constructible_v<PropertyValue, ValueType>,
-            "Unsupported material property type");
+        static_assert(std::is_constructible_v<PropertyValue, ValueType>,
+                      "Unsupported material property type");
         if (name.empty()) {
             throw std::invalid_argument("Property name must not be empty");
         }
-        properties_.insert_or_assign(
-            std::move(name),
-            Property{PropertyValue(std::forward<T>(value))});
+
+        PropertyValue propertyValue(std::forward<T>(value));
+        const PushConstantField* field = propertyLayout_.findField(name);
+        if (shader_ != nullptr && field == nullptr) {
+            throw std::invalid_argument(
+                "Shader has no push-constant property named: " + name);
+        }
+        std::vector<std::byte> encodedValue;
+        if (field != nullptr) {
+            if (field->offset > propertyData_.size() ||
+                field->size > propertyData_.size() - field->offset) {
+                throw std::out_of_range(
+                    "Shader push-constant property exceeds its layout: " +
+                    name);
+            }
+            encodedValue.resize(field->size, std::byte{0});
+            writePropertyValue(*field, propertyValue,
+                               encodedValue.data());
+        }
+
+        properties_.insert_or_assign(name, Property{propertyValue});
+        if (field != nullptr) {
+            std::memcpy(propertyData_.data() + field->offset,
+                        encodedValue.data(), encodedValue.size());
+        }
         bumpVersion();
     }
 
     bool removeProperty(const std::string& name) {
-        if (properties_.erase(name) == 0) {
-            return false;
+        auto propertyIt = properties_.find(name);
+        const PushConstantField* field = propertyLayout_.findField(name);
+        if (propertyIt == properties_.end() && field != nullptr) {
+            propertyIt = std::find_if(
+                properties_.begin(), properties_.end(),
+                [this, field](const auto& entry) {
+                    return propertyLayout_.findField(entry.first) == field;
+                });
+        }
+        if (propertyIt == properties_.end()) return false;
+        properties_.erase(propertyIt);
+        if (field != nullptr && propertyData_.size() >= field->offset &&
+            field->size <= propertyData_.size() - field->offset) {
+            const bool hasAlias = std::any_of(
+                properties_.begin(), properties_.end(),
+                [this, field](const auto& entry) {
+                    return propertyLayout_.findField(entry.first) == field;
+                });
+            if (hasAlias) {
+                bumpVersion();
+                return true;
+            }
+            std::memset(propertyData_.data() + field->offset, 0, field->size);
         }
         bumpVersion();
         return true;
@@ -152,7 +187,19 @@ public:
 
     const Property* property(const std::string& name) const noexcept {
         const auto it = properties_.find(name);
-        return it == properties_.end() ? nullptr : &it->second;
+        if (it != properties_.end()) {
+            return &it->second;
+        }
+        const PushConstantField* field = propertyLayout_.findField(name);
+        if (field == nullptr) {
+            return nullptr;
+        }
+        for (const auto& [propertyName, value] : properties_) {
+            if (propertyLayout_.findField(propertyName) == field) {
+                return &value;
+            }
+        }
+        return nullptr;
     }
 
     template <typename T>
@@ -161,56 +208,61 @@ public:
         return found ? std::get_if<T>(&found->value) : nullptr;
     }
 
-    const std::unordered_map<std::string, Property>& properties() const noexcept {
-        return properties_;
+    const std::byte* propertyRaw(const std::string& name) const noexcept {
+        const PushConstantField* field = propertyLayout_.findField(name);
+        if (field == nullptr || propertyData_.empty()) {
+            return nullptr;
+        }
+        for (const auto& [propertyName, value] : properties_) {
+            (void)value;
+            if (propertyLayout_.findField(propertyName) == field) {
+                return propertyData_.data() + field->offset;
+            }
+        }
+        return nullptr;
+    }
+
+    const std::vector<std::byte>& propertyData() const noexcept {
+        return propertyData_;
     }
 
     std::vector<std::byte> packPushConstants(
         const PushConstantLayout& layout) const {
         std::vector<std::byte> data(layout.size, std::byte{0});
         for (const PushConstantField& field : layout.fields) {
-            const auto it = properties_.find(field.propertyName);
-            if (it == properties_.end()) {
+            const std::string& fieldName =
+                field.qualifiedName.empty() ? field.propertyName
+                                            : field.qualifiedName;
+            const std::byte* source = propertyRaw(fieldName);
+            if (source == nullptr) {
                 throw std::invalid_argument(
-                    "Missing material property: " + field.propertyName);
+                    "Missing material property: " + fieldName);
             }
-
-            const PropertyValue& value = it->second.value;
-            const size_t valueSize = std::visit(
-                [](const auto& propertyValue) { return sizeof(propertyValue); },
-                value);
             if (field.offset > layout.size ||
-                valueSize > layout.size - field.offset) {
+                field.size > layout.size - field.offset) {
                 throw std::out_of_range(
                     "Push constant property exceeds the provided layout");
             }
-
-            std::visit(
-                [&data, &field](const auto& propertyValue) {
-                    std::memcpy(data.data() + field.offset, &propertyValue,
-                                sizeof(propertyValue));
-                },
-                value);
+            std::memcpy(data.data() + field.offset,
+                        source, field.size);
         }
         return data;
     }
 
     uint64_t sizeBytes() const noexcept override {
         uint64_t bytes = sizeof(*this);
-        for (const auto& [name, propertyValue] : properties_) {
+        bytes += propertyData_.capacity();
+        for (const auto& [name, property] : properties_) {
+            (void)property;
             bytes += name.size();
-            bytes += std::visit(
-                [](const auto& value) {
-                    return static_cast<uint64_t>(sizeof(value));
-                },
-                propertyValue.value);
+            bytes += sizeof(Property);
         }
-        for (const auto& [name, texture] : textures_) {
-            (void)texture;
+        for (const auto& [name, t] : textures_) {
+            (void)t;
             bytes += name.size() + sizeof(std::shared_ptr<Texture>);
         }
-        for (const auto& [name, renderBuffer] : renderBuffers_) {
-            (void)renderBuffer;
+        for (const auto& [name, rb] : renderBuffers_) {
+            (void)rb;
             bytes += name.size() + sizeof(std::shared_ptr<RenderBuffer>);
         }
         bytes += sizeof(std::shared_ptr<Shader>);
@@ -218,9 +270,140 @@ public:
     }
 
 private:
+    static void writePropertyValue(const PushConstantField& field,
+                                   const PropertyValue& value,
+                                   std::byte* destination) {
+        if (field.arrayCount != 1) {
+            throw std::invalid_argument(
+                "Push-constant arrays are not supported for property: " +
+                field.propertyName);
+        }
+        if (field.size == 0 || destination == nullptr) {
+            throw std::invalid_argument(
+                "Push-constant property has an invalid reflected size");
+        }
+        std::memset(destination, 0, field.size);
+
+        const uint32_t dimensions =
+            static_cast<uint32_t>(field.type.rows) * field.type.columns;
+        const auto failType = [&field]() {
+            throw std::invalid_argument(
+                "Material property type does not match shader field: " +
+                field.propertyName);
+        };
+        if (dimensions == 1) {
+            const void* source = nullptr;
+            size_t sourceSize = 0;
+            switch (field.type.scalar) {
+                case ShaderScalarType::Int32:
+                    if (const auto* v = std::get_if<int32_t>(&value)) {
+                        source = v;
+                        sourceSize = sizeof(*v);
+                    }
+                    break;
+                case ShaderScalarType::UInt32:
+                    if (const auto* v = std::get_if<uint32_t>(&value)) {
+                        source = v;
+                        sourceSize = sizeof(*v);
+                    }
+                    break;
+                case ShaderScalarType::Float32:
+                    if (const auto* v = std::get_if<float>(&value)) {
+                        source = v;
+                        sourceSize = sizeof(*v);
+                    }
+                    break;
+                default:
+                    break;
+            }
+            if (source == nullptr || sourceSize > field.size) {
+                failType();
+            }
+            std::memcpy(destination, source, sourceSize);
+            return;
+        }
+
+        if (field.type.scalar != ShaderScalarType::Float32) {
+            failType();
+        }
+        if (field.type.rows > 1 && field.type.columns > 1) {
+            const float* values = nullptr;
+            size_t valueCount = 0;
+            if (const auto* v = std::get_if<std::array<float, 4>>(&value)) {
+                values = v->data();
+                valueCount = v->size();
+            } else if (const auto* v =
+                           std::get_if<std::array<float, 9>>(&value)) {
+                values = v->data();
+                valueCount = v->size();
+            } else if (const auto* v =
+                           std::get_if<std::array<float, 16>>(&value)) {
+                values = v->data();
+                valueCount = v->size();
+            }
+            const size_t expectedCount =
+                static_cast<size_t>(field.type.rows) * field.type.columns;
+            if (values == nullptr || valueCount != expectedCount) {
+                failType();
+            }
+            const uint32_t majorCount =
+                field.rowMajor ? field.type.rows : field.type.columns;
+            const uint32_t minorCount =
+                field.rowMajor ? field.type.columns : field.type.rows;
+            const uint32_t stride =
+                field.matrixStride != 0
+                    ? field.matrixStride
+                    : minorCount * static_cast<uint32_t>(sizeof(float));
+            for (uint32_t major = 0; major < majorCount; ++major) {
+                for (uint32_t minor = 0; minor < minorCount; ++minor) {
+                    const uint32_t row =
+                        field.rowMajor ? major : minor;
+                    const uint32_t column =
+                        field.rowMajor ? minor : major;
+                    const size_t sourceIndex =
+                        static_cast<size_t>(column) * field.type.rows + row;
+                    const size_t destinationOffset =
+                        static_cast<size_t>(major) * stride +
+                        static_cast<size_t>(minor) * sizeof(float);
+                    if (destinationOffset + sizeof(float) > field.size) {
+                        throw std::invalid_argument(
+                            "Reflected matrix stride exceeds property size: " +
+                            field.propertyName);
+                    }
+                    std::memcpy(destination + destinationOffset,
+                                values + sourceIndex, sizeof(float));
+                }
+            }
+            return;
+        }
+
+        const float* values = nullptr;
+        size_t valueCount = 0;
+        if (const auto* v = std::get_if<std::array<float, 2>>(&value)) {
+            values = v->data();
+            valueCount = v->size();
+        } else if (const auto* v =
+                       std::get_if<std::array<float, 3>>(&value)) {
+            values = v->data();
+            valueCount = v->size();
+        } else if (const auto* v =
+                       std::get_if<std::array<float, 4>>(&value)) {
+            values = v->data();
+            valueCount = v->size();
+        }
+        if (values == nullptr || valueCount != dimensions ||
+            valueCount * sizeof(float) > field.size) {
+            failType();
+        }
+        std::memcpy(destination, values, valueCount * sizeof(float));
+    }
+
     std::shared_ptr<Shader> shader_;
     std::unordered_map<std::string, std::shared_ptr<Texture>> textures_;
     std::unordered_map<std::string, std::shared_ptr<RenderBuffer>> renderBuffers_;
+
+    PushConstantLayout propertyLayout_;
+    std::vector<std::byte> propertyData_;
     std::unordered_map<std::string, Property> properties_;
 };
 
