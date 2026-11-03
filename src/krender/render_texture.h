@@ -49,6 +49,24 @@ public:
     VkImageUsageFlags usage() const noexcept { return usage_; }
     VkImageAspectFlags aspect() const noexcept { return aspect_; }
 
+    void resize(uint32_t width, uint32_t height) {
+        if (width == 0 || height == 0) {
+            throw std::invalid_argument(
+                "RenderTexture dimensions must be positive");
+        }
+        if (static_cast<uint64_t>(width) * height >
+            std::numeric_limits<uint32_t>::max()) {
+            throw std::length_error("RenderTexture dimensions are too large");
+        }
+        if (width_ == width && height_ == height) {
+            return;
+        }
+        width_ = width;
+        height_ = height;
+        setNativeState(VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED);
+        bumpVersion();
+    }
+
     // Available after this texture has been resolved by the Vulkan renderer.
     VkImageView nativeHandle() const noexcept { return nativeHandle_; }
     VkImageLayout nativeLayout() const noexcept { return nativeLayout_; }

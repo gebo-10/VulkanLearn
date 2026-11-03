@@ -12,6 +12,10 @@
 
 #include <glfw_window.h>
 
+#include <imgui.h>
+#include <backends/imgui_impl_glfw.h>
+#include <backends/imgui_impl_vulkan.h>
+
 #include <stb_image.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
@@ -21,8 +25,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -40,6 +46,161 @@ struct Vertex {
     float normal[3];
     float color[3];
     float uv[2];
+};
+
+class DemoImGui {
+public:
+    ~DemoImGui() { shutdown(); }
+
+    void initialize(GLFWwindow* window, VkInstance instance,
+                    klib::krender::VulkanContext& context,
+                    VkFormat depthFormat) {
+        try {
+
+
+            IMGUI_CHECKVERSION();
+            ImGui::CreateContext();
+            contextCreated_ = true;
+            ImGuiIO& io = ImGui::GetIO();
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard |
+                          ImGuiConfigFlags_DockingEnable;
+            ImGui::StyleColorsDark();
+
+        float dpi_scale = 2.0f;
+        ImGuiStyle& style = ImGui::GetStyle();
+        style.ScaleAllSizes(dpi_scale); // 缩放内边距、间距、边框等
+        style.FontScaleDpi = dpi_scale; // 缩放字体
+
+
+            if (!ImGui_ImplGlfw_InitForVulkan(window, true)) {
+                throw std::runtime_error(
+                    "Failed to initialize ImGui GLFW backend");
+            }
+            glfwInitialized_ = true;
+
+            const VkFormat colorFormat =
+                context.swapchainOwner()->imageFormat();
+            VkPipelineRenderingCreateInfo renderingInfo{
+                VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+            renderingInfo.colorAttachmentCount = 1;
+            renderingInfo.pColorAttachmentFormats = &colorFormat;
+            renderingInfo.depthAttachmentFormat = depthFormat;
+            renderingInfo.stencilAttachmentFormat =
+                depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT ||
+                        depthFormat == VK_FORMAT_D24_UNORM_S8_UINT
+                    ? depthFormat
+                    : VK_FORMAT_UNDEFINED;
+
+            const auto device = context.deviceOwner();
+            ImGui_ImplVulkan_InitInfo initInfo{};
+            initInfo.ApiVersion = VK_API_VERSION_1_3;
+            initInfo.Instance = instance;
+            initInfo.PhysicalDevice = device->physicalDevice();
+            initInfo.Device = device->handle();
+            initInfo.QueueFamily = device->graphicsQueueFamily();
+            initInfo.Queue = device->graphicsQueue();
+            initInfo.DescriptorPoolSize = 100;
+            initInfo.MinImageCount = 2;
+            initInfo.ImageCount = context.imageCount();
+            initInfo.UseDynamicRendering = true;
+            initInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+            initInfo.PipelineInfoMain.PipelineRenderingCreateInfo =
+                renderingInfo;
+            if (!ImGui_ImplVulkan_Init(&initInfo)) {
+                throw std::runtime_error(
+                    "Failed to initialize ImGui Vulkan backend");
+            }
+            vulkanInitialized_ = true;
+            device_ = device->handle();
+        } catch (...) {
+            shutdown();
+            throw;
+        }
+    }
+
+    void beginFrame() const {
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+    }
+
+    void setImage(klib::krender::RenderTexture& colorTexture,
+                  klib::krender::RenderTexture& depthTexture,
+                  klib::krender::RenderTarget& target,
+                  klib::krender::vulkanimpl::VulkanRenderImpl& renderer,
+                  VkDevice device, uint32_t width, uint32_t height) {
+        if (width == 0 || height == 0) {
+            return;
+        }
+        if (colorTexture.width() != width ||
+            colorTexture.height() != height) {
+            if (textureDescriptor_ != VK_NULL_HANDLE) {
+                klib::vk::checkVk(vkDeviceWaitIdle(device),
+                                  "vkDeviceWaitIdle(ImGui texture resize)");
+                ImGui_ImplVulkan_RemoveTexture(textureDescriptor_);
+                textureDescriptor_ = VK_NULL_HANDLE;
+            }
+            colorTexture.resize(width, height);
+            depthTexture.resize(width, height);
+        }
+
+        renderer.setRenderTarget(target.handle());
+        if (textureDescriptor_ == VK_NULL_HANDLE) {
+            if (colorTexture.nativeHandle() == VK_NULL_HANDLE) {
+                throw std::logic_error(
+                    "RenderTexture has no Vulkan image view");
+            }
+            textureDescriptor_ = ImGui_ImplVulkan_AddTexture(
+                colorTexture.nativeHandle(),
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            if (textureDescriptor_ == VK_NULL_HANDLE) {
+                throw std::runtime_error(
+                    "ImGui failed to allocate a RenderTexture descriptor");
+            }
+        }
+    }
+
+    ImTextureRef imageReference() const {
+        ImTextureID id{};
+        static_assert(sizeof(id) == sizeof(textureDescriptor_),
+                      "ImGui texture ID must hold a Vulkan descriptor set");
+        std::memcpy(&id, &textureDescriptor_, sizeof(id));
+        return ImTextureRef(id);
+    }
+
+    void render(VkCommandBuffer commandBuffer) const {
+        ImGui::Render();
+        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
+    }
+
+private:
+    VkDevice device_ = VK_NULL_HANDLE;
+    VkDescriptorSet textureDescriptor_ = VK_NULL_HANDLE;
+    bool contextCreated_ = false;
+    bool glfwInitialized_ = false;
+    bool vulkanInitialized_ = false;
+
+    void shutdown() noexcept {
+        if (device_ != VK_NULL_HANDLE) {
+            vkDeviceWaitIdle(device_);
+        }
+        if (textureDescriptor_ != VK_NULL_HANDLE && vulkanInitialized_) {
+            ImGui_ImplVulkan_RemoveTexture(textureDescriptor_);
+            textureDescriptor_ = VK_NULL_HANDLE;
+        }
+        if (vulkanInitialized_) {
+            ImGui_ImplVulkan_Shutdown();
+            vulkanInitialized_ = false;
+        }
+        if (glfwInitialized_) {
+            ImGui_ImplGlfw_Shutdown();
+            glfwInitialized_ = false;
+        }
+        if (contextCreated_) {
+            ImGui::DestroyContext();
+            contextCreated_ = false;
+        }
+    }
 };
 
 }  // namespace
@@ -216,6 +377,28 @@ int main() {
             ResourceKind::RenderTarget, ZeroRefPolicy::Persistent,
             RenderTarget::Screen);
         render->setRenderTarget(screenTarget->handle());
+        const VkExtent2D initialExtent = context.extent();
+        auto cubeColorTexture = resourceManager.createAs<RenderTexture>(
+            ResourceKind::RenderTexture, ZeroRefPolicy::Persistent,
+            initialExtent.width, initialExtent.height);
+        const VkFormat depthFormat = vulkanRenderer->screenDepthFormat();
+        const VkImageAspectFlags depthAspect =
+            VK_IMAGE_ASPECT_DEPTH_BIT |
+            (depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT ||
+                     depthFormat == VK_FORMAT_D24_UNORM_S8_UINT
+                 ? VK_IMAGE_ASPECT_STENCIL_BIT
+                 : 0);
+        auto cubeDepthTexture = resourceManager.createAs<RenderTexture>(
+            ResourceKind::RenderTexture, ZeroRefPolicy::Persistent,
+            initialExtent.width, initialExtent.height, depthFormat,
+            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+            depthAspect);
+        auto cubeRenderTarget = resourceManager.createAs<RenderTarget>(
+            ResourceKind::RenderTarget, ZeroRefPolicy::Persistent,
+            cubeColorTexture, cubeDepthTexture);
+        DemoImGui imgui;
+        imgui.initialize(window.nativeHandle(), instance->handle(), context,
+                         depthFormat);
         std::array<glm::mat4, 3> frameData{
             glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f)};
         auto commonUniformBuffer = resourceManager.createAs<RenderBuffer>(
@@ -252,26 +435,51 @@ int main() {
                 }
             }
 
-            const VkExtent2D renderExtent = context.extent();
-            glm::mat4 projection = glm::perspectiveRH_ZO(
-                glm::radians(45.0f),
-                static_cast<float>(renderExtent.width) /
-                    static_cast<float>(renderExtent.height),
-                0.1f, 10.0f);
-            projection[1][1] *= -1.0f;
             const glm::mat4 view =
                 glm::lookAtRH(glm::vec3(2.4f, 1.8f, 2.8f),
                               glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-            frameData[0] = view;
-            frameData[1] = projection;
-            frameData[2] = projection * view;
-            commonUniformBuffer->update(frameData.data(), sizeof(frameData));
             const float time = static_cast<float>(glfwGetTime());
             glm::mat4 model =
                 glm::rotate(glm::mat4(1.0f), time * 0.8f,
                             glm::vec3(0.0f, 1.0f, 0.0f)) *
                 glm::rotate(glm::mat4(1.0f), time * 0.5f,
                             glm::vec3(1.0f, 0.0f, 0.0f));
+
+            imgui.beginFrame();
+
+            ImGuiID dockspace_id = ImGui::DockSpaceOverViewport(
+                0, 
+                ImGui::GetMainViewport(), 
+                ImGuiDockNodeFlags_PassthruCentralNode  // 核心标志：让中央节点透传
+            );
+
+            ImGui::Begin("Cube View", nullptr);
+            const ImVec2 imageSize = ImGui::GetContentRegionAvail();
+            const ImVec2 framebufferScale =
+                ImGui::GetIO().DisplayFramebufferScale;
+            const uint32_t targetWidth = static_cast<uint32_t>(
+                std::max(1.0f, std::ceil(imageSize.x * framebufferScale.x)));
+            const uint32_t targetHeight = static_cast<uint32_t>(
+                std::max(1.0f, std::ceil(imageSize.y * framebufferScale.y)));
+            imgui.setImage(*cubeColorTexture, *cubeDepthTexture,
+                           *cubeRenderTarget, *vulkanRenderer,
+                           context.deviceOwner()->handle(), targetWidth,
+                           targetHeight);
+            ImGui::Image(imgui.imageReference(), imageSize);
+            ImGui::End();
+
+            glm::mat4 cubeProjection = glm::perspectiveRH_ZO(
+                glm::radians(45.0f),
+                static_cast<float>(cubeColorTexture->width()) /
+                    static_cast<float>(cubeColorTexture->height()),
+                0.1f, 10.0f);
+            cubeProjection[1][1] *= -1.0f;
+            frameData[0] = view;
+            frameData[1] = cubeProjection;
+            frameData[2] = cubeProjection * view;
+            commonUniformBuffer->update(frameData.data(), sizeof(frameData));
+
+            render->setRenderTarget(cubeRenderTarget->handle());
             render->beginFrame();
             if (vulkanRenderer->swapchainRecreationRequired()) {
                 continue;
@@ -289,6 +497,8 @@ int main() {
                                   sizeof(model));
             render->renderMesh(cube->handle(), material->handle(), 2);
 
+            render->setRenderTarget(screenTarget->handle());
+            imgui.render(vulkanRenderer->currentCommandBuffer());
             render->endFrame();
         }
 

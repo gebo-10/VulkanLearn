@@ -440,6 +440,16 @@ public:
         return swapchainRecreationRequired_;
     }
 
+    VkCommandBuffer currentCommandBuffer() const {
+        requireActiveFrame();
+        return commandBuffer_;
+    }
+
+    VkFormat screenDepthFormat() {
+        ensureDepthTargets();
+        return depthFormat_;
+    }
+
 private:
     struct BufferAllocation {
         vk::DeviceMemoryPtr memory;
