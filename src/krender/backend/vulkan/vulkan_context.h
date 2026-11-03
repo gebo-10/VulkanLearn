@@ -330,6 +330,79 @@ public:
         vkFreeMemory(device, memory, nullptr);
     }
 
+    void transitionImageLayout(VkImage image, VkImageAspectFlags aspect,
+                               VkImageLayout oldLayout,
+                               VkImageLayout newLayout) {
+        VkPipelineStageFlags sourceStage =
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        VkPipelineStageFlags destinationStage =
+            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+        VkAccessFlags sourceAccess = 0;
+        VkAccessFlags destinationAccess = 0;
+        switch (oldLayout) {
+            case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+                sourceStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+                sourceAccess = VK_ACCESS_SHADER_READ_BIT;
+                break;
+            case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+                sourceStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+                sourceAccess = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                               VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                break;
+            case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+                sourceStage =
+                    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                    VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+                sourceAccess =
+                    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+                break;
+            case VK_IMAGE_LAYOUT_UNDEFINED:
+                break;
+            default:
+                throw std::invalid_argument(
+                    "Unsupported old image layout for transition");
+        }
+        switch (newLayout) {
+            case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+                destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+                destinationAccess = VK_ACCESS_SHADER_READ_BIT;
+                break;
+            case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+                destinationStage =
+                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+                destinationAccess = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                                    VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                break;
+            case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+                destinationStage =
+                    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                    VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+                destinationAccess =
+                    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+                break;
+            default:
+                throw std::invalid_argument(
+                    "Unsupported new image layout for transition");
+        }
+
+        VkCommandBuffer commandBuffer = beginOneShot();
+        VkImageMemoryBarrier barrier{
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        barrier.srcAccessMask = sourceAccess;
+        barrier.dstAccessMask = destinationAccess;
+        barrier.oldLayout = oldLayout;
+        barrier.newLayout = newLayout;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = image;
+        barrier.subresourceRange = {aspect, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(commandBuffer, sourceStage, destinationStage, 0,
+                             0, nullptr, 0, nullptr, 1, &barrier);
+        endOneShot(commandBuffer);
+    }
+
     VkDevice device = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
     VkQueue graphicsQueue = VK_NULL_HANDLE;

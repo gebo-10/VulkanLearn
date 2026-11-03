@@ -54,6 +54,7 @@ public:
     virtual void setCommonUniformBuffer(const Handle& renderBuffer,
                                         uint32_t set,
                                         uint32_t binding) = 0;
+    virtual void setRenderTarget(const Handle& renderTarget) = 0;
     virtual void renderMesh(const Handle& mesh, const Handle& material, int instanceCount) = 0;
 };
 }

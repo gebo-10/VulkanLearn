@@ -23,6 +23,8 @@ enum class ResourceKind {
     Mesh,
     Material,
     Texture,
+    RenderTexture,
+    RenderTarget,
     Shader,
     RenderBuffer
 };

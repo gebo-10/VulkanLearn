@@ -1,6 +1,7 @@
 #pragma once
 
 #include "render_buffer.h"
+#include "render_texture.h"
 #include "shader.h"
 #include "texture.h"
 
@@ -105,11 +106,14 @@ public:
     void setTexture(std::string name, std::shared_ptr<Texture> texture) {
         if (name.empty()) throw std::invalid_argument("Texture binding name must not be empty");
         if (!texture) throw std::invalid_argument("Material requires a valid texture");
+        renderTextures_.erase(name);
         textures_.insert_or_assign(std::move(name), std::move(texture));
         bumpVersion();
     }
     bool removeTexture(const std::string& name) {
-        if (textures_.erase(name) == 0) return false;
+        const bool removed = textures_.erase(name) != 0;
+        const bool removedRenderTexture = renderTextures_.erase(name) != 0;
+        if (!removed && !removedRenderTexture) return false;
         bumpVersion();
         return true;
     }
@@ -119,6 +123,36 @@ public:
     }
     const std::unordered_map<std::string, std::shared_ptr<Texture>>& textures() const noexcept {
         return textures_;
+    }
+
+    void setRenderTexture(std::string name,
+                          std::shared_ptr<RenderTexture> texture) {
+        if (name.empty()) {
+            throw std::invalid_argument(
+                "Render texture binding name must not be empty");
+        }
+        if (!texture) {
+            throw std::invalid_argument(
+                "Material requires a valid render texture");
+        }
+        textures_.erase(name);
+        renderTextures_.insert_or_assign(std::move(name), std::move(texture));
+        bumpVersion();
+    }
+
+    bool removeRenderTexture(const std::string& name) {
+        return removeTexture(name);
+    }
+
+    const std::shared_ptr<RenderTexture>* renderTexture(
+        const std::string& name) const noexcept {
+        const auto it = renderTextures_.find(name);
+        return it == renderTextures_.end() ? nullptr : &it->second;
+    }
+
+    const std::unordered_map<std::string, std::shared_ptr<RenderTexture>>&
+    renderTextures() const noexcept {
+        return renderTextures_;
     }
 
     void setRenderBuffer(std::string name, std::shared_ptr<RenderBuffer> rb) {
@@ -382,6 +416,10 @@ public:
             (void)t;
             bytes += name.size() + sizeof(std::shared_ptr<Texture>);
         }
+        for (const auto& [name, t] : renderTextures_) {
+            (void)t;
+            bytes += name.size() + sizeof(std::shared_ptr<RenderTexture>);
+        }
         for (const auto& [name, rb] : renderBuffers_) {
             (void)rb;
             bytes += name.size() + sizeof(std::shared_ptr<RenderBuffer>);
@@ -603,6 +641,8 @@ private:
 
     std::shared_ptr<Shader> shader_;
     std::unordered_map<std::string, std::shared_ptr<Texture>> textures_;
+    std::unordered_map<std::string, std::shared_ptr<RenderTexture>>
+        renderTextures_;
     std::unordered_map<std::string, std::shared_ptr<RenderBuffer>> renderBuffers_;
 
     PushConstantLayout propertyLayout_;

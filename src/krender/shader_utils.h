@@ -79,6 +79,8 @@ inline const char* toString(ResourceKind kind) noexcept {
         case ResourceKind::Mesh: return "mesh";
         case ResourceKind::Material: return "material";
         case ResourceKind::Texture: return "texture";
+        case ResourceKind::RenderTexture: return "render-texture";
+        case ResourceKind::RenderTarget: return "render-target";
         case ResourceKind::Shader: return "shader";
         case ResourceKind::RenderBuffer: return "render-buffer";
     }

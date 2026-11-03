@@ -4,7 +4,9 @@
 #include <krender/material.h>
 #include <krender/mesh.h>
 #include <krender/render_buffer.h>
+#include <krender/render_target.h>
 #include <krender/resource_manager.h>
+#include <krender/render_texture.h>
 #include <krender/shader.h>
 #include <krender/texture.h>
 #include <krender/backend/vulkan/vulkan_context.h>
@@ -46,6 +48,11 @@ public:
     ~VulkanRenderImpl() override {
         if (context_.deviceOwner()) {
             vkDeviceWaitIdle(context_.deviceOwner()->handle());
+        }
+        for (auto& [handle, texture] : renderTextures_) {
+            (void)handle;
+            texture.resource->setNativeState(VK_NULL_HANDLE,
+                                             VK_IMAGE_LAYOUT_UNDEFINED);
         }
     }
 
@@ -151,9 +158,20 @@ public:
         viewport_ = {0.0f, 0.0f, static_cast<float>(extent.width),
                      static_cast<float>(extent.height), 0.0f, 1.0f};
         scissor_ = {{0, 0}, extent};
+        activeExtent_ = extent;
+        activeColorFormat_ = context_.swapchainOwner()->imageFormat();
+        activeDepthFormat_ = depthFormat_;
+        activeRenderTarget_.reset();
         vkCmdSetViewport(commandBuffer_, 0, 1, &viewport_);
         vkCmdSetScissor(commandBuffer_, 0, 1, &scissor_);
         frameActive_ = true;
+        if (selectedRenderTarget_) {
+            if (selectedRenderTarget_->isScreen()) {
+                activeRenderTarget_ = selectedRenderTarget_;
+            } else {
+                setRenderTarget(selectedRenderTarget_->handle());
+            }
+        }
     }
 
     void endFrame() override {
@@ -161,6 +179,7 @@ public:
             return;
         }
         vkCmdEndRendering(commandBuffer_);
+        finishActiveRenderTarget();
 
         VkImageMemoryBarrier toPresent{
             VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -187,10 +206,12 @@ public:
             presentResult == VK_SUBOPTIMAL_KHR ||
             presentResult == VK_ERROR_OUT_OF_DATE_KHR;
         if (!retiredMeshes_.empty() || !retiredTextures_.empty() ||
+            !retiredRenderTextures_.empty() ||
             !retiredRenderBuffers_.empty() || !retiredDescriptors_.empty()) {
             context_.deviceOwner()->waitIdle();
             retiredDescriptors_.clear();
             retiredTextures_.clear();
+            retiredRenderTextures_.clear();
             retiredRenderBuffers_.clear();
             retiredMeshes_.clear();
         }
@@ -213,13 +234,17 @@ public:
             attachments.push_back(attachment);
         }
         if (hasFlag(flags, ClearFlag::Depth)) {
+            if (activeDepthFormat_ == VK_FORMAT_UNDEFINED) {
+                throw std::invalid_argument(
+                    "The selected RenderTarget has no depth attachment");
+            }
             VkClearAttachment attachment{};
             attachment.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
             attachment.clearValue.depthStencil = {value.depth, value.stencil};
             attachments.push_back(attachment);
         }
         if (hasFlag(flags, ClearFlag::Stencil)) {
-            if (!hasStencilComponent(depthFormat_)) {
+            if (!hasStencilComponent(activeDepthFormat_)) {
                 throw std::invalid_argument(
                     "The selected Vulkan depth format has no stencil component");
             }
@@ -285,6 +310,35 @@ public:
         commonUniformBufferBinding_ = binding;
     }
 
+    void setRenderTarget(const Handle& renderTargetHandle) override {
+        const auto target = resources_.get<RenderTarget>(renderTargetHandle);
+        if (!target) {
+            throw std::invalid_argument("RenderTarget handle is invalid");
+        }
+        if (!target->isScreen()) {
+            validateRenderTarget(*target);
+        }
+        if (!frameActive_) {
+            selectedRenderTarget_ = target;
+            if (!target->isScreen()) {
+                resolveRenderTexture(*target->color());
+                if (target->depth()) {
+                    resolveRenderTexture(*target->depth());
+                }
+            }
+            return;
+        }
+        selectedRenderTarget_ = target;
+        if (activeRenderTarget_ &&
+            activeRenderTarget_->handle() == target->handle()) {
+            return;
+        }
+        vkCmdEndRendering(commandBuffer_);
+        finishActiveRenderTarget();
+        activeRenderTarget_ = target;
+        beginActiveRenderTarget();
+    }
+
     void renderMesh(const Handle& meshHandle, const Handle& materialHandle,
                     int instanceCount) override {
         requireActiveFrame();
@@ -337,7 +391,9 @@ public:
         }
 
         const GpuMesh& gpuMesh = resolveMesh(*mesh);
-        const auto pipeline = resolvePipeline(*material->shader(), data.layout);
+        const auto pipeline =
+            resolvePipeline(*material->shader(), data.layout,
+                            activeColorFormat_, activeDepthFormat_);
         const auto descriptorSets =
             resolveDescriptorSets(*material, *material->shader(), *pipeline);
 
@@ -411,6 +467,15 @@ private:
         BufferAllocation allocation;
     };
 
+    struct GpuRenderTexture {
+        uint32_t version = UINT32_MAX;
+        std::shared_ptr<RenderTexture> resource;
+        vk::DeviceMemoryPtr memory;
+        vk::ImagePtr image;
+        vk::ImageViewPtr view;
+        VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    };
+
     struct DepthTarget {
         vk::DeviceMemoryPtr memory;
         vk::ImagePtr image;
@@ -437,15 +502,19 @@ private:
     std::unordered_map<Handle, GpuMesh, HandleHash> meshes_;
     std::unordered_map<Handle, GpuTexture, HandleHash> textures_;
     std::unordered_map<Handle, GpuRenderBuffer, HandleHash> renderBuffers_;
+    std::unordered_map<Handle, GpuRenderTexture, HandleHash> renderTextures_;
     std::unordered_map<std::string, std::shared_ptr<PipelineState>> pipelines_;
     std::unordered_map<Handle, DescriptorState, HandleHash> descriptors_;
     std::vector<GpuMesh> retiredMeshes_;
     std::vector<GpuTexture> retiredTextures_;
+    std::vector<GpuRenderTexture> retiredRenderTextures_;
     std::vector<GpuRenderBuffer> retiredRenderBuffers_;
     std::vector<DescriptorState> retiredDescriptors_;
     std::vector<DepthTarget> depthTargets_;
     std::vector<bool> depthImageInitialized_;
     std::vector<bool> swapchainImageInitialized_;
+    std::shared_ptr<RenderTarget> selectedRenderTarget_;
+    std::shared_ptr<RenderTarget> activeRenderTarget_;
     std::shared_ptr<RenderBuffer> commonUniformBuffer_;
     uint32_t commonUniformBufferSet_ = 0;
     uint32_t commonUniformBufferBinding_ = 0;
@@ -455,6 +524,9 @@ private:
     uint32_t imageIndex_ = 0;
     VkViewport viewport_{};
     VkRect2D scissor_{};
+    VkExtent2D activeExtent_{};
+    VkFormat activeColorFormat_ = VK_FORMAT_UNDEFINED;
+    VkFormat activeDepthFormat_ = VK_FORMAT_UNDEFINED;
     bool frameActive_ = false;
     bool swapchainRecreationRequired_ = false;
 
@@ -463,6 +535,222 @@ private:
             throw std::logic_error(
                 "Rendering commands require an active Vulkan frame");
         }
+    }
+
+    void validateRenderTarget(const RenderTarget& target) const {
+        const RenderTexturePtr& color = target.color();
+        if (!color ||
+            (color->usage() & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) == 0 ||
+            (color->aspect() & VK_IMAGE_ASPECT_COLOR_BIT) == 0) {
+            throw std::invalid_argument(
+                "RenderTarget color attachment is not renderable");
+        }
+        VkFormatProperties colorProperties{};
+        vkGetPhysicalDeviceFormatProperties(
+            context_.deviceOwner()->physicalDevice(), color->format(),
+            &colorProperties);
+        if ((colorProperties.optimalTilingFeatures &
+             VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) == 0) {
+            throw std::invalid_argument(
+                "RenderTarget color format is not supported as an attachment");
+        }
+        if (target.depth()) {
+            const RenderTexture& depth = *target.depth();
+            if ((depth.usage() &
+                 VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) == 0 ||
+                (depth.aspect() & VK_IMAGE_ASPECT_DEPTH_BIT) == 0 ||
+                (hasStencilComponent(depth.format()) &&
+                 (depth.aspect() & VK_IMAGE_ASPECT_STENCIL_BIT) == 0) ||
+                depth.width() != color->width() ||
+                depth.height() != color->height()) {
+                throw std::invalid_argument(
+                    "RenderTarget depth attachment is not compatible");
+            }
+            VkFormatProperties depthProperties{};
+            vkGetPhysicalDeviceFormatProperties(
+                context_.deviceOwner()->physicalDevice(), depth.format(),
+                &depthProperties);
+            if ((depthProperties.optimalTilingFeatures &
+                 VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) == 0) {
+                throw std::invalid_argument(
+                    "RenderTarget depth format is not supported as an attachment");
+            }
+        }
+    }
+
+    void transitionRenderTexture(GpuRenderTexture& texture,
+                                 VkImageLayout newLayout) {
+        VkPipelineStageFlags sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        VkPipelineStageFlags destinationStage =
+            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+        VkAccessFlags sourceAccess = 0;
+        VkAccessFlags destinationAccess = 0;
+        switch (texture.layout) {
+            case VK_IMAGE_LAYOUT_UNDEFINED:
+                break;
+            case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+                sourceStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+                sourceAccess = VK_ACCESS_SHADER_READ_BIT;
+                break;
+            case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+                sourceStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+                sourceAccess = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                               VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                break;
+            case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+                sourceStage =
+                    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                    VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+                sourceAccess =
+                    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+                break;
+            default:
+                throw std::invalid_argument(
+                    "Unsupported RenderTexture image layout");
+        }
+        switch (newLayout) {
+            case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+                destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+                destinationAccess = VK_ACCESS_SHADER_READ_BIT;
+                break;
+            case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+                destinationStage =
+                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+                destinationAccess = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                                    VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                break;
+            case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+                destinationStage =
+                    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                    VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+                destinationAccess =
+                    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+                break;
+            default:
+                throw std::invalid_argument(
+                    "Unsupported RenderTexture target image layout");
+        }
+
+        VkImageMemoryBarrier barrier{
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        barrier.srcAccessMask = sourceAccess;
+        barrier.dstAccessMask = destinationAccess;
+        barrier.oldLayout = texture.layout;
+        barrier.newLayout = newLayout;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = texture.image->handle();
+        barrier.subresourceRange = {texture.resource->aspect(), 0, 1, 0, 1};
+        vkCmdPipelineBarrier(commandBuffer_, sourceStage, destinationStage, 0,
+                             0, nullptr, 0, nullptr, 1, &barrier);
+        texture.layout = newLayout;
+        texture.resource->setNativeState(texture.view->handle(), newLayout);
+    }
+
+    void finishActiveRenderTarget() {
+        if (!activeRenderTarget_ || activeRenderTarget_->isScreen()) {
+            return;
+        }
+        const RenderTexturePtr& color = activeRenderTarget_->color();
+        if ((color->usage() & VK_IMAGE_USAGE_SAMPLED_BIT) != 0) {
+            transitionRenderTexture(renderTextures_.at(color->handle()),
+                                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
+        if (activeRenderTarget_->depth() &&
+            (activeRenderTarget_->depth()->usage() &
+             VK_IMAGE_USAGE_SAMPLED_BIT) != 0) {
+            transitionRenderTexture(
+                renderTextures_.at(activeRenderTarget_->depth()->handle()),
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
+    }
+
+    void beginActiveRenderTarget() {
+        VkRenderingAttachmentInfo colorAttachment{
+            VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        VkRenderingAttachmentInfo depthAttachment{
+            VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        VkRenderingInfo renderingInfo{VK_STRUCTURE_TYPE_RENDERING_INFO};
+
+        if (!activeRenderTarget_ || activeRenderTarget_->isScreen()) {
+            const VkExtent2D extent = context_.extent();
+            activeExtent_ = extent;
+            activeColorFormat_ = context_.swapchainOwner()->imageFormat();
+            activeDepthFormat_ = depthFormat_;
+            colorAttachment.imageView =
+                context_.swapchainOwner()->imageViews().at(imageIndex_);
+            colorAttachment.imageLayout =
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            colorAttachment.clearValue.color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+
+            depthAttachment.imageView =
+                depthTargets_.at(imageIndex_).view->handle();
+            depthAttachment.imageLayout =
+                VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            depthAttachment.clearValue.depthStencil = {1.0f, 0};
+            renderingInfo.pDepthAttachment = &depthAttachment;
+            if (hasStencilComponent(activeDepthFormat_)) {
+                renderingInfo.pStencilAttachment = &depthAttachment;
+            }
+        } else {
+            const RenderTarget& target = *activeRenderTarget_;
+            validateRenderTarget(target);
+            GpuRenderTexture& color =
+                resolveRenderTexture(*target.color());
+            transitionRenderTexture(color,
+                                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            const VkExtent2D extent{target.color()->width(),
+                                    target.color()->height()};
+            activeExtent_ = extent;
+            activeColorFormat_ = target.color()->format();
+            colorAttachment.imageView = color.view->handle();
+            colorAttachment.imageLayout =
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            colorAttachment.clearValue.color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+
+            if (target.depth()) {
+                GpuRenderTexture& depth =
+                    resolveRenderTexture(*target.depth());
+                transitionRenderTexture(
+                    depth, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+                activeDepthFormat_ = target.depth()->format();
+                depthAttachment.imageView = depth.view->handle();
+                depthAttachment.imageLayout =
+                    VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+                depthAttachment.storeOp =
+                    (target.depth()->usage() & VK_IMAGE_USAGE_SAMPLED_BIT) != 0
+                        ? VK_ATTACHMENT_STORE_OP_STORE
+                        : VK_ATTACHMENT_STORE_OP_DONT_CARE;
+                depthAttachment.clearValue.depthStencil = {1.0f, 0};
+                renderingInfo.pDepthAttachment = &depthAttachment;
+                if (hasStencilComponent(activeDepthFormat_)) {
+                    renderingInfo.pStencilAttachment = &depthAttachment;
+                }
+            } else {
+                activeDepthFormat_ = VK_FORMAT_UNDEFINED;
+            }
+        }
+
+        renderingInfo.renderArea = {{0, 0}, activeExtent_};
+        renderingInfo.layerCount = 1;
+        renderingInfo.colorAttachmentCount = 1;
+        renderingInfo.pColorAttachments = &colorAttachment;
+        vkCmdBeginRendering(commandBuffer_, &renderingInfo);
+
+        viewport_ = {0.0f, 0.0f, static_cast<float>(activeExtent_.width),
+                     static_cast<float>(activeExtent_.height), 0.0f, 1.0f};
+        scissor_ = {{0, 0}, activeExtent_};
+        vkCmdSetViewport(commandBuffer_, 0, 1, &viewport_);
+        vkCmdSetScissor(commandBuffer_, 0, 1, &scissor_);
     }
 
     BufferAllocation createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
@@ -645,11 +933,13 @@ private:
 
     static std::string pipelineKey(const Shader& shader,
                                   const VertexLayout& layout,
-                                  VkFormat colorFormat) {
+                                  VkFormat colorFormat,
+                                  VkFormat depthFormat) {
         std::string key = std::to_string(shader.handle().index) + ":" +
                           std::to_string(shader.handle().generation) + ":" +
                           std::to_string(shader.interface().fingerprint()) +
                           ":" + std::to_string(colorFormat) + ":" +
+                          std::to_string(depthFormat) + ":" +
                           std::to_string(layout.stride);
         for (const VertexAttribute& attribute : layout.attributes) {
             key += ":" + std::to_string(attribute.location) + "," +
@@ -660,7 +950,8 @@ private:
     }
 
     std::shared_ptr<PipelineState> resolvePipeline(
-        const Shader& shader, const VertexLayout& vertexLayout) {
+        const Shader& shader, const VertexLayout& vertexLayout,
+        VkFormat colorFormat, VkFormat depthFormat) {
         std::string error;
         if (!shader.validate(&error)) {
             throw std::invalid_argument("Invalid shader: " + error);
@@ -681,10 +972,8 @@ private:
                 "Graphics shader requires a fragment stage");
         }
 
-        const VkFormat colorFormat = context_.swapchainOwner()->imageFormat();
         const std::string key =
-            pipelineKey(shader, vertexLayout, colorFormat) + ":" +
-            std::to_string(depthFormat_);
+            pipelineKey(shader, vertexLayout, colorFormat, depthFormat);
         const auto found = pipelines_.find(key);
         if (found != pipelines_.end()) {
             return found->second;
@@ -812,8 +1101,10 @@ private:
         multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
         VkPipelineDepthStencilStateCreateInfo depthStencil{
             VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-        depthStencil.depthTestEnable = VK_TRUE;
-        depthStencil.depthWriteEnable = VK_TRUE;
+        depthStencil.depthTestEnable =
+            depthFormat == VK_FORMAT_UNDEFINED ? VK_FALSE : VK_TRUE;
+        depthStencil.depthWriteEnable =
+            depthFormat == VK_FORMAT_UNDEFINED ? VK_FALSE : VK_TRUE;
         depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
         depthStencil.stencilTestEnable = VK_FALSE;
         VkPipelineColorBlendAttachmentState blendAttachment{};
@@ -828,9 +1119,9 @@ private:
             VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
         rendering.colorAttachmentCount = 1;
         rendering.pColorAttachmentFormats = &colorFormat;
-        rendering.depthAttachmentFormat = depthFormat_;
+        rendering.depthAttachmentFormat = depthFormat;
         rendering.stencilAttachmentFormat =
-            hasStencilComponent(depthFormat_) ? depthFormat_
+            hasStencilComponent(depthFormat) ? depthFormat
                                                : VK_FORMAT_UNDEFINED;
         VkGraphicsPipelineCreateInfo pipelineInfo{
             VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
@@ -855,6 +1146,14 @@ private:
     uint64_t descriptorFingerprint(const Material& material) const {
         uint64_t hash = material.version();
         for (const auto& [name, texture] : material.textures()) {
+            for (unsigned char ch : name) {
+                hash = (hash ^ ch) * 1099511628211ull;
+            }
+            hash = (hash ^ texture->handle().index) * 1099511628211ull;
+            hash = (hash ^ texture->handle().generation) * 1099511628211ull;
+            hash = (hash ^ texture->version()) * 1099511628211ull;
+        }
+        for (const auto& [name, texture] : material.renderTextures()) {
             for (unsigned char ch : name) {
                 hash = (hash ^ ch) * 1099511628211ull;
             }
@@ -993,15 +1292,47 @@ private:
                        binding.type == BindingType::CombinedImageSampler) {
                 VkDescriptorImageInfo imageInfo{};
                 const auto* texture = material.texture(binding.name);
-                if (texture == nullptr || !*texture) {
+                const auto* renderTexture =
+                    material.renderTexture(binding.name);
+                if ((texture == nullptr || !*texture) &&
+                    (renderTexture == nullptr || !*renderTexture)) {
                     throw std::invalid_argument(
                         "Material is missing texture binding: " + binding.name);
                 }
-                const GpuTexture& gpuTexture = resolveTexture(**texture);
-                imageInfo.imageView = gpuTexture.view->handle();
-                imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                if (texture != nullptr && *texture) {
+                    const GpuTexture& gpuTexture = resolveTexture(**texture);
+                    imageInfo.imageView = gpuTexture.view->handle();
+                    imageInfo.imageLayout =
+                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                } else {
+                    if (((*renderTexture)->usage() &
+                         VK_IMAGE_USAGE_SAMPLED_BIT) == 0) {
+                        throw std::invalid_argument(
+                            "RenderTexture does not support shader sampling: " +
+                            binding.name);
+                    }
+                    if (activeRenderTarget_ &&
+                        !activeRenderTarget_->isScreen() &&
+                        (activeRenderTarget_->color()->handle() ==
+                             (*renderTexture)->handle() ||
+                         (activeRenderTarget_->depth() &&
+                          activeRenderTarget_->depth()->handle() ==
+                              (*renderTexture)->handle()))) {
+                        throw std::invalid_argument(
+                            "A RenderTexture cannot be sampled while attached "
+                            "to the active RenderTarget");
+                    }
+                    GpuRenderTexture& gpuTexture =
+                        resolveRenderTexture(**renderTexture);
+                    imageInfo.imageView = gpuTexture.view->handle();
+                    imageInfo.imageLayout =
+                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                }
                 if (binding.type == BindingType::CombinedImageSampler) {
-                    imageInfo.sampler = gpuTexture.sampler->handle();
+                    imageInfo.sampler =
+                        texture != nullptr && *texture
+                            ? resolveTexture(**texture).sampler->handle()
+                            : defaultSampler_->handle();
                 }
                 imageInfos.push_back(imageInfo);
                 write.pImageInfo = &imageInfos.back();
@@ -1020,6 +1351,64 @@ private:
         cached.fingerprint = fingerprint;
         cached.shaderFingerprint = shaderFingerprint;
         return cached.sets;
+    }
+
+    GpuRenderTexture& resolveRenderTexture(RenderTexture& texture) {
+        VkFormatProperties formatProperties{};
+        vkGetPhysicalDeviceFormatProperties(
+            context_.deviceOwner()->physicalDevice(), texture.format(),
+            &formatProperties);
+        if ((texture.usage() & VK_IMAGE_USAGE_SAMPLED_BIT) != 0 &&
+            (formatProperties.optimalTilingFeatures &
+             VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) == 0) {
+            throw std::invalid_argument(
+                "RenderTexture format does not support shader sampling");
+        }
+        GpuRenderTexture& cached = renderTextures_[texture.handle()];
+        if (cached.image && cached.version == texture.version()) {
+            return cached;
+        }
+
+        GpuRenderTexture replacement;
+        replacement.version = texture.version();
+        replacement.resource = resources_.get<RenderTexture>(texture.handle());
+        if (!replacement.resource) {
+            throw std::logic_error(
+                "RenderTexture is no longer registered in the resource manager");
+        }
+        replacement.image = std::make_shared<vk::Image>(
+            context_.deviceOwner(), VK_IMAGE_TYPE_2D, texture.format(),
+            VkExtent3D{texture.width(), texture.height(), 1},
+            texture.usage());
+        const VkMemoryRequirements requirements =
+            replacement.image->memoryRequirements();
+        replacement.memory = std::make_shared<vk::DeviceMemory>(
+            context_.deviceOwner(), requirements.size,
+            context_.findMemoryType(requirements.memoryTypeBits,
+                                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT));
+        replacement.image->bindMemory(replacement.memory->handle());
+        replacement.view = std::make_shared<vk::ImageView>(
+            context_.deviceOwner(), replacement.image->handle(),
+            texture.format(), texture.aspect());
+        if ((texture.usage() & VK_IMAGE_USAGE_SAMPLED_BIT) != 0) {
+            context_.transitionImageLayout(
+                replacement.image->handle(), texture.aspect(),
+                VK_IMAGE_LAYOUT_UNDEFINED,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            replacement.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        }
+        replacement.resource->setNativeState(replacement.view->handle(),
+                                             replacement.layout);
+        if (cached.image) {
+            if (cached.resource != replacement.resource) {
+                cached.resource->setNativeState(VK_NULL_HANDLE,
+                                                VK_IMAGE_LAYOUT_UNDEFINED);
+            }
+            retiredRenderTextures_.push_back(cached);
+        }
+        cached = std::move(replacement);
+        cached.resource->setNativeState(cached.view->handle(), cached.layout);
+        return cached;
     }
 
     GpuTexture& resolveTexture(const Texture& texture) {

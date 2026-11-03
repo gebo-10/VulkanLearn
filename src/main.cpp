@@ -3,6 +3,8 @@
 #include <krender/material.h>
 #include <krender/mesh.h>
 #include <krender/render_buffer.h>
+#include <krender/render_target.h>
+#include <krender/render_texture.h>
 #include <krender/resource_manager.h>
 #include <krender/shader.h>
 #include <krender/shader_utils.h>
@@ -210,6 +212,10 @@ int main() {
         auto vulkanRenderer =
             std::make_shared<VulkanRenderImpl>(context, resourceManager);
         std::shared_ptr<IRender> render = vulkanRenderer;
+        auto screenTarget = resourceManager.createAs<RenderTarget>(
+            ResourceKind::RenderTarget, ZeroRefPolicy::Persistent,
+            RenderTarget::Screen);
+        render->setRenderTarget(screenTarget->handle());
         std::array<glm::mat4, 3> frameData{
             glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f)};
         auto commonUniformBuffer = resourceManager.createAs<RenderBuffer>(
