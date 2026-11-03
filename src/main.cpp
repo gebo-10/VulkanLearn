@@ -261,7 +261,7 @@ int main() {
             frameData[2] = projection * view;
             commonUniformBuffer->update(frameData.data(), sizeof(frameData));
             const float time = static_cast<float>(glfwGetTime());
-            const glm::mat4 model =
+            glm::mat4 model =
                 glm::rotate(glm::mat4(1.0f), time * 0.8f,
                             glm::vec3(0.0f, 1.0f, 0.0f)) *
                 glm::rotate(glm::mat4(1.0f), time * 0.5f,
@@ -275,7 +275,14 @@ int main() {
                                      1.0f, 0});
             material->setProperty("model", glm::value_ptr(model),
                                   sizeof(model));
-            render->renderMesh(cube->handle(), material->handle(), 4);
+            render->renderMesh(cube->handle(), material->handle(), 1);
+
+
+            model =  glm::translate(glm::mat4(1.0f), glm::vec3(1.5f, 1.0f, 0.0f)) *model;
+            material->setProperty("model", glm::value_ptr(model),
+                                  sizeof(model));
+            render->renderMesh(cube->handle(), material->handle(), 2);
+
             render->endFrame();
         }
 

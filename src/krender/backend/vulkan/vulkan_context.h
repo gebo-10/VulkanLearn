@@ -5,7 +5,7 @@
 #include <kvk/instance.h>
 #include <kvk/surface.h>
 #include <kvk/swapchain.h>
-#include <sync_objects.h>
+#include "sync_objects.h"
 
 #include <cstdint>
 #include <cstddef>
